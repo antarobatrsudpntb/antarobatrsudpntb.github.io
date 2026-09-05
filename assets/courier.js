@@ -139,7 +139,7 @@ export function createCourierModule(ctx) {
   }
 
   async function renderHome() {
-    page().innerHTML = `<section class="hero compact"><div><div class="eyebrow">KURIR</div><h1>Pengantaran Hari Ini</h1><p>Ambil paket sesuai arah perjalanan, buka navigasi, hubungi penerima, dan selesaikan pengantaran dengan verifikasi penerimaan.</p></div><div class="hero-actions"><button id="courierHomeRefresh" class="secondary-btn">↻ Segarkan</button></div></section>
+    page().innerHTML = `<section class="hero compact brand-hero"><div><div class="eyebrow">KURIR</div><h1>Pengantaran Hari Ini</h1><p>Ambil paket sesuai arah perjalanan, buka navigasi, hubungi penerima, dan selesaikan pengantaran dengan verifikasi penerimaan.</p></div><img class="hero-brand-mascot" src="./icons/mascot-melesat.png" alt="" aria-hidden="true"><div class="hero-actions"><button id="courierHomeRefresh" class="secondary-btn">↻ Segarkan</button></div></section>
       <section class="section"><div id="courierHomeIncident"></div><div id="courierMetrics" class="grid grid-4"><div class="inline-loading">Memuat…</div></div></section>
       <section class="section"><div class="section-heading"><div><h2>Fokus Sekarang</h2><p>Aksi yang paling sering dibutuhkan Kurir.</p></div></div><div id="courierFocus" class="grid grid-2"></div></section>
       <section class="section"><div class="section-heading"><div><h2>Wilayah Siap Terbanyak</h2><p>Membantu memilih paket yang searah dengan perjalanan.</p></div></div><div id="courierRouteSummary" class="grid grid-3"></div></section>`;
@@ -386,7 +386,13 @@ export function createCourierModule(ctx) {
     if (!r) return ctx.showToast('Tugas tidak ditemukan. Segarkan halaman.', 'error');
     if (r.failureReported) return ctx.showToast('Gagal Antar sudah dicatat. Kembalikan obat ke Farmasi.', 'warning');
     const reasons = state.master?.failureReasons || [];
-    ctx.openModal(`<div class="modal-head"><div><div class="eyebrow">GAGAL ANTAR</div><h3>Catat Gagal Antar</h3><p>${esc(r.name)} • ${esc(r.village)}</p></div><button class="modal-x" data-modal-close>×</button></div><div class="notice-box warning-note">Gunakan bila pengantaran hari ini sudah tidak memungkinkan. Setelah disimpan, obat wajib dikembalikan ke Farmasi. Penjadwalan ulang atau pengambilan mandiri ditindaklanjuti oleh Farmasi.</div><div class="form-grid modal-form"><label><span>Alasan gagal *</span><select id="failReason"><option value="">Pilih alasan</option>${reasons.map(v=>`<option value="${esc(v)}" ${r.pendingReason===v?'selected':''}>${esc(v)}</option>`).join('')}</select></label><label><span>Catatan tambahan <small>opsional</small></span><textarea id="failDetail" rows="3" placeholder="Keterangan singkat bila diperlukan">${esc(r.pendingDetail||'')}</textarea></label></div><div id="failMessage"></div><div class="modal-actions"><button class="secondary-btn" data-modal-close>Batal</button><button id="failSubmit" class="danger-btn">Simpan Gagal Antar & Buka WhatsApp</button></div>`);
+    const attemptNo = Math.max(1, Number(r.attemptNo || 1));
+    const maxAttempts = Math.max(1, Number(r.maxAttempts || 2));
+    const maxReached = attemptNo >= maxAttempts;
+    const failureNotice = maxReached
+      ? `Gunakan bila pengantaran ke-${attemptNo} sudah tidak memungkinkan. Setelah disimpan, obat wajib dikembalikan ke Farmasi. Karena batas ${maxAttempts} kali pengantaran telah tercapai, tindak lanjut setelah obat kembali hanya pengambilan mandiri di Loket Farmasi.`
+      : 'Gunakan bila pengantaran hari ini sudah tidak memungkinkan. Setelah disimpan, obat wajib dikembalikan ke Farmasi. Setelah obat diterima kembali, Farmasi akan menghubungi pasien untuk menentukan pengantaran ulang atau pengambilan mandiri.';
+    ctx.openModal(`<div class="modal-head"><div><div class="eyebrow">GAGAL ANTAR</div><h3>Catat Gagal Antar${attemptNo>1?` ke-${attemptNo}`:''}</h3><p>${esc(r.name)} • ${esc(r.village)}</p></div><button class="modal-x" data-modal-close>×</button></div><div class="notice-box warning-note">${esc(failureNotice)}</div><div class="form-grid modal-form"><label><span>Alasan gagal *</span><select id="failReason"><option value="">Pilih alasan</option>${reasons.map(v=>`<option value="${esc(v)}" ${r.pendingReason===v?'selected':''}>${esc(v)}</option>`).join('')}</select></label><label><span>Catatan tambahan <small>opsional</small></span><textarea id="failDetail" rows="3" placeholder="Keterangan singkat bila diperlukan">${esc(r.pendingDetail||'')}</textarea></label></div><div id="failMessage"></div><div class="modal-actions"><button class="secondary-btn" data-modal-close>Batal</button><button id="failSubmit" class="danger-btn">Simpan Gagal Antar & Buka WhatsApp</button></div>`);
     document.getElementById('failSubmit')?.addEventListener('click', () => submitFailure(id));
   }
 
@@ -400,7 +406,7 @@ export function createCourierModule(ctx) {
       const res = await api().failTask(token(), id, {reason,detail});
       if(res.data?.record)state.mine=state.mine.map(x=>String(x.id)===String(id)?res.data.record:x);
       ctx.closeModal(); renderTasksData(); ctx.showToast('Gagal Antar disimpan. Kembalikan obat ke Farmasi.', 'warning', 7000);
-      if (res.data?.waAction) openWaAction(res.data.waAction, 'Beritahu pasien — Gagal Antar');
+      if (res.data?.waAction) openWaAction(res.data.waAction, res.data.waAction.maxReached ? `Beritahu pasien — Pengantaran ke-${Number(res.data.waAction.attemptNo||2)} Gagal` : 'Beritahu pasien — Gagal Antar');
       setTimeout(()=>refreshRows({silent:true}).catch(()=>{}),160);
     } catch (err) { if (msg) msg.innerHTML = `<div class="alert error">${esc(err.message)}</div>`; }
     finally { setBusy(button,false); }

@@ -68,7 +68,7 @@ class Painter {
     const ctx=this.ctx, y=55;
     if (this.logo) ctx.drawImage(this.logo,MARGIN,y,82,82);
     this.font(21,700); ctx.fillText('RSUD Provinsi Nusa Tenggara Barat',MARGIN+100,y+26);
-    this.font(31,800); ctx.fillText('Laporan Layanan Pengantaran Obat Gratis',MARGIN+100,y+64);
+    this.font(31,800); ctx.fillText('Laporan MELESAT — Pengantaran Obat',MARGIN+100,y+64);
     this.font(16,400); ctx.fillStyle=COLORS.muted;
     const basis = this.meta.basis === 'SELESAI' ? 'Tanggal Pengantaran Selesai' : 'Tanggal Pendaftaran';
     ctx.fillText(`Periode ${fmtDate(this.meta.start)} - ${fmtDate(this.meta.end)}  |  Hitung berdasarkan ${basis}`,MARGIN+100,y+92);
@@ -184,7 +184,7 @@ function pdfFromJpegs(jpegs, title='Laporan Pengantaran Obat') {
     objects[contentObj]=concat([enc(`<< /Length ${cb.length} >>\nstream\n`),cb,enc('endstream')]);
   }
   const safeTitle=clean(title).replace(/[()\\]/g,' ');
-  objects[infoObj]=enc(`<< /Title (${safeTitle}) /Producer (Pengantaran Obat Gratis RSUD Provinsi NTB) >>`);
+  objects[infoObj]=enc(`<< /Title (${safeTitle}) /Producer (MELESAT - Pengantaran Obat RSUD Provinsi NTB) >>`);
   const chunks=[enc('%PDF-1.4\n%\u00ff\u00ff\u00ff\u00ff\n')];
   const offsets=new Array(objectCount+1).fill(0); let offset=chunks[0].length;
   for(let i=1;i<=objectCount;i++){

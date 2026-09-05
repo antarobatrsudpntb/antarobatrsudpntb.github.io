@@ -1,7 +1,7 @@
 {
-  "name": "Pengantaran Obat Gratis",
-  "short_name": "Antar Obat",
-  "description": "Layanan Pengantaran Obat Gratis RSUD Provinsi Nusa Tenggara Barat",
+  "name": "MELESAT — Pengantaran Obat",
+  "short_name": "MELESAT",
+  "description": "Pengantaran Obat RSUD Provinsi NTB — Istirahat di Rumah, Obat Kami yang Antar.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

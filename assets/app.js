@@ -402,7 +402,7 @@ function openView(view) {
   state.view = view;
   document.querySelectorAll('[data-view]').forEach(button => button.classList.toggle('active',button.dataset.view === view));
   const role = String(state.session?.user?.role || '').toUpperCase();
-  const meta = PAGE_META[view] || ['Menu','Pengantaran Obat Gratis'];
+  const meta = PAGE_META[view] || ['Menu','MELESAT · Pengantaran Obat'];
   $('pageTitle').textContent = role === 'MANAJEMEN' && view === 'home' ? 'Ringkasan' : meta[0];
   $('pageSubtitle').textContent = role === 'MANAJEMEN' && view === 'home' ? 'Key Performance Indicator (KPI) layanan' : meta[1];
   const contextLabel = role === 'MANAJEMEN' ? 'DASHBOARD MANAJEMEN' : role === 'ADMIN' ? 'ADMIN DATA' : role === 'FARMASI' ? 'FARMASI' : role === 'KURIR' ? 'KURIR' : 'LAYANAN INTERNAL';

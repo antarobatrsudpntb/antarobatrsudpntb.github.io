@@ -1,7 +1,7 @@
 import { DEPLOYMENT_CONFIG } from './deployment.js?v=1.0.0';
 
 export const APP_CONFIG = Object.freeze({
-  appName: 'Pengantaran Obat Gratis',
+  appName: 'MELESAT — Pengantaran Obat',
   organization: 'RSUD Provinsi Nusa Tenggara Barat',
   version: '1.0.0',
   apiContract: 'ANTAROBAT-V1',

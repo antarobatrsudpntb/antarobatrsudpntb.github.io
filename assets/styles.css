@@ -464,7 +464,7 @@ button.is-loading,.primary-btn.is-loading,.secondary-btn.is-loading,.warning-btn
   .route-summary-count{padding:9px 10px;min-width:64px}
 }
 
-/* 6G HF2 — Courier completion form: one-hand mobile touch polish. */
+/* Courier completion form: one-hand mobile touch polish. */
 #finishCodeBox label,
 #finishNoCodeBox label{
   display:grid;
@@ -524,4 +524,38 @@ button.is-loading,.primary-btn.is-loading,.secondary-btn.is-loading,.warning-btn
   #finishNoCodeBox label>span{font-size:13px}
   #finishCode{min-height:60px;font-size:24px;border-radius:15px;padding:11px 16px}
   #finishNoCode{min-height:60px;font-size:17px;border-radius:15px;padding-top:12px;padding-bottom:12px}
+}
+
+
+/* MELESAT — branding layer. Business logic unchanged. */
+.melesat-login-stage{position:relative;z-index:1;display:grid;grid-template-columns:minmax(0,1fr) minmax(190px,270px);align-items:center;gap:24px;max-width:880px}
+.login-mascot{width:100%;max-width:270px;justify-self:end;filter:drop-shadow(0 20px 28px rgba(0,0,0,.18));transform:rotate(-2deg)}
+.login-copy .melesat-tagline{margin:0;color:#fff;font-size:clamp(18px,1.7vw,23px);font-weight:850;line-height:1.45;max-width:560px}
+.login-copy .melesat-descriptor{margin-top:13px;font-size:clamp(13px,1.15vw,16px);color:#c5e0e4;line-height:1.6;max-width:540px}
+.side-brand small{display:block;margin-top:3px;color:#74aeb6;font-size:9px;font-weight:700}
+.brand-hero{padding-right:150px}
+.hero-brand-mascot{position:absolute;right:24px;bottom:-7px;width:112px;height:112px;object-fit:contain;z-index:1;filter:drop-shadow(0 10px 15px rgba(0,0,0,.16));pointer-events:none}
+.brand-hero .hero-actions{margin-right:94px}
+
+@media(max-width:820px){
+  .login-mobile-identity{display:grid;grid-template-columns:1fr auto;grid-template-areas:"official mascot" "copy mascot";align-items:center;gap:8px 12px;width:min(470px,100%);margin:0 auto;padding:3px 7px 0}
+  .login-mobile-official{grid-area:official;display:flex;align-items:center;gap:8px;min-width:0}
+  .login-mobile-official img{width:35px;height:35px;object-fit:contain;background:#fff;border:1px solid #d8e7e9;border-radius:10px;padding:3px}
+  .login-mobile-official span{color:#55727c;font-size:10px;font-weight:800}
+  .login-mobile-mascot{grid-area:mascot;width:104px;height:104px;object-fit:contain;filter:drop-shadow(0 10px 16px rgba(5,56,68,.13))}
+  .login-mobile-copy{grid-area:copy;text-align:left;line-height:1.15}
+  .login-mobile-kicker{font-size:11px;letter-spacing:.18em;color:#087a84}
+  .login-mobile-copy strong{font-size:22px;color:#062f3b}
+  .login-mobile-copy small{max-width:260px;font-size:10px;line-height:1.4;color:#617983}
+  .brand-hero{padding-right:112px}
+  .hero-brand-mascot{right:10px;bottom:-3px;width:86px;height:86px;opacity:.98}
+  .brand-hero .hero-actions{margin-right:0}
+}
+@media(max-width:480px){
+  .login-mobile-identity{grid-template-columns:minmax(0,1fr) 88px;gap:6px 8px;padding:0 4px}
+  .login-mobile-mascot{width:88px;height:88px}
+  .login-mobile-copy strong{font-size:19px}
+  .login-mobile-official img{width:31px;height:31px}
+  .brand-hero{padding-right:92px}
+  .hero-brand-mascot{width:72px;height:72px;right:8px}
 }

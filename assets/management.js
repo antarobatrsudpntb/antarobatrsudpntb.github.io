@@ -58,8 +58,8 @@ export function createManagementModule(ctx) {
   }
   function periodLabel() { return state.start === state.end ? fmtDate(state.start) : `${fmtDate(state.start)}–${fmtDate(state.end)}`; }
 
-  function hero(title, subtitle, eyebrow = 'MANAJEMEN') {
-    return `<section class="hero compact management-hero"><div><div class="eyebrow">${esc(eyebrow)}</div><h1>${esc(title)}</h1><p>${esc(subtitle)}</p></div><div class="hero-actions"><button id="mgmtRefresh" class="secondary-btn">↻ Segarkan</button></div></section>`;
+  function hero(title, subtitle, eyebrow = 'MANAJEMEN', branded = false) {
+    return `<section class="hero compact management-hero ${branded?'brand-hero':''}"><div><div class="eyebrow">${esc(eyebrow)}</div><h1>${esc(title)}</h1><p>${esc(subtitle)}</p></div>${branded?'<img class="hero-brand-mascot" src="./icons/mascot-melesat.png" alt="" aria-hidden="true">':''}<div class="hero-actions"><button id="mgmtRefresh" class="secondary-btn">↻ Segarkan</button></div></section>`;
   }
   function metric(label, value, note = '', tone = '') {
     return `<div class="kpi-card ${tone}"><span>${esc(label)}</span><strong>${esc(String(value))}</strong>${note ? `<small>${esc(note)}</small>` : ''}</div>`;
@@ -260,7 +260,7 @@ export function createManagementModule(ctx) {
 
   async function renderHome() {
     setManagementPageMode('summary');
-    page().innerHTML = `${hero('Ringkasan Eksekutif','Gambaran singkat layanan pengantaran obat untuk pemantauan dan pengambilan keputusan.')}<section class="section">${filterBar()}<div id="mgmtHome" class="mgmt-loading">Memuat data…</div></section>`;
+    page().innerHTML = `${hero('Ringkasan Eksekutif','Gambaran singkat layanan pengantaran obat untuk pemantauan dan pengambilan keputusan.','MANAJEMEN',true)}<section class="section">${filterBar()}<div id="mgmtHome" class="mgmt-loading">Memuat data…</div></section>`;
     bindFilter(() => loadHome(true));
     document.getElementById('mgmtRefresh').onclick = () => refreshCurrent(drawHome, 'HOME');
     await loadHome(false);
@@ -351,7 +351,7 @@ export function createManagementModule(ctx) {
 
   function reportPreview(d) {
     const k = d.kpi || {}, v = d.verification || {}, inc = d.incidentSummary || {}, pharm = d.pharmacyPerformance || {staff:[]};
-    return `<div class="content-card mgmt-report-preview"><div class="report-preview-head"><img src="./icons/logo-rsud.png" alt="Logo RSUD"><div><strong>RSUD Provinsi Nusa Tenggara Barat</strong><h2>Laporan Layanan Pengantaran Obat Gratis</h2><p>Periode ${fmtDate(d.meta?.start)}–${fmtDate(d.meta?.end)} • Hitung berdasarkan ${esc(d.meta?.basis === 'SELESAI' ? 'Tanggal Pengantaran Selesai' : 'Tanggal Pendaftaran')}</p></div></div>
+    return `<div class="content-card mgmt-report-preview"><div class="report-preview-head"><img src="./icons/logo-rsud.png" alt="Logo RSUD"><div><strong>RSUD Provinsi Nusa Tenggara Barat</strong><h2>Laporan MELESAT — Pengantaran Obat</h2><p>Periode ${fmtDate(d.meta?.start)}–${fmtDate(d.meta?.end)} • Hitung berdasarkan ${esc(d.meta?.basis === 'SELESAI' ? 'Tanggal Pengantaran Selesai' : 'Tanggal Pendaftaran')}</p></div></div>
       <div class="report-section"><h3>Key Performance Indicator (KPI)</h3><div class="report-summary-grid"><div><span>Total Pendaftaran</span><b>${n(k.total)}</b></div><div><span>Terkirim</span><b>${n(k.delivered)}</b></div><div><span>Gagal Antar</span><b>${n(k.failed)}</b></div><div><span>Tingkat Keberhasilan</span><b>${pct(k.successRate)}</b></div><div><span>Penerimaan Terverifikasi</span><b>${pct(v.rate)}</b></div><div><span>Kendala</span><b>${n(inc.total)}</b></div></div></div>
       <div class="report-section"><h3>Waktu Layanan</h3>${reportTimeStats(d.timeStats || {})}</div>
       ${d.activeIncidents?.length ? `<div class="report-section"><h3>Kendala Aktif</h3>${reportIncidentTable(d.activeIncidents)}</div>` : ''}

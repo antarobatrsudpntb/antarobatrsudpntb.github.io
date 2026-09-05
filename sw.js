@@ -1,10 +1,11 @@
-const APP_VERSION = '1.0.1';
-const CACHE = `antar-obat-${APP_VERSION}`;
+const APP_VERSION = '1.0.2';
+const CACHE = `melesat-antar-obat-${APP_VERSION}`;
 const STATIC = [
   './',
   './index.html',
   './manifest.webmanifest',
   './icons/logo-rsud.png',
+  './icons/mascot-melesat.png',
   './icons/icon-192.png',
   './icons/icon-512.png'
 ];
