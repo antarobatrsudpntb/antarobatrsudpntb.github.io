@@ -59,7 +59,7 @@ export function createManagementModule(ctx) {
   function periodLabel() { return state.start === state.end ? fmtDate(state.start) : `${fmtDate(state.start)}–${fmtDate(state.end)}`; }
 
   function hero(title, subtitle, eyebrow = 'MANAJEMEN', branded = false) {
-    return `<section class="hero compact management-hero ${branded?'brand-hero':''}"><div><div class="eyebrow">${esc(eyebrow)}</div><h1>${esc(title)}</h1><p>${esc(subtitle)}</p></div>${branded?'<img class="hero-brand-mascot" src="./icons/mascot-melesat.png" alt="" aria-hidden="true">':''}<div class="hero-actions"><button id="mgmtRefresh" class="secondary-btn">↻ Segarkan</button></div></section>`;
+    return `<section class="hero compact management-hero"><div><div class="eyebrow">${esc(eyebrow)}</div><h1>${esc(title)}</h1><p>${esc(subtitle)}</p></div><div class="hero-actions"><button id="mgmtRefresh" class="secondary-btn">↻ Segarkan</button></div></section>`;
   }
   function metric(label, value, note = '', tone = '') {
     return `<div class="kpi-card ${tone}"><span>${esc(label)}</span><strong>${esc(String(value))}</strong>${note ? `<small>${esc(note)}</small>` : ''}</div>`;

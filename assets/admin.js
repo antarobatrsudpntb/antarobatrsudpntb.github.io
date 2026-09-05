@@ -106,7 +106,7 @@ export function createAdminModule(ctx) {
   }
 
   async function renderHome() {
-    page().innerHTML = `<section class="hero compact brand-hero"><div><div class="eyebrow">ADMIN DATA</div><h1>Pusat Pemeliharaan Data</h1><p>Koreksi data, arsip, master, dan audit dalam satu tempat.</p></div><img class="hero-brand-mascot" src="./icons/mascot-melesat.png" alt="" aria-hidden="true"><div class="hero-actions"><button id="adminHomeRefresh" class="secondary-btn">↻ Segarkan</button></div></section><section class="section" id="adminHomeBody"><div class="inline-loading">Memuat…</div></section>`;
+    page().innerHTML = `<section class="hero compact"><div><div class="eyebrow">ADMIN DATA</div><h1>Pusat Pemeliharaan Data</h1><p>Koreksi data, arsip, master, dan audit dalam satu tempat.</p></div><div class="hero-actions"><button id="adminHomeRefresh" class="secondary-btn">↻ Segarkan</button></div></section><section class="section" id="adminHomeBody"><div class="inline-loading">Memuat…</div></section>`;
     document.getElementById('adminHomeRefresh')?.addEventListener('click',async event => {
       setBusy(event.currentTarget,true,'Memuat…');
       try { await bootstrap(true); drawHome(); ctx.showToast('Data Admin diperbarui.','success'); }

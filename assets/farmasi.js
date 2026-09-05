@@ -353,7 +353,7 @@ export function createFarmasiModule(ctx) {
   }
 
   async function renderHome() {
-    page().innerHTML = `<section class="hero compact brand-hero"><div><div class="eyebrow">FARMASI</div><h1>Ruang Kerja Farmasi</h1><p>Pendaftaran, kesiapan obat, label, dan verifikasi penerimaan dalam satu alur kerja.</p></div><img class="hero-brand-mascot" src="./icons/mascot-melesat.png" alt="" aria-hidden="true"><div class="hero-actions"><button id="homeRegister" class="primary-btn">＋ Daftarkan Pengantaran</button><button id="homeRefresh" class="secondary-btn">↻ Segarkan</button></div></section>
+    page().innerHTML = `<section class="hero compact"><div><div class="eyebrow">FARMASI</div><h1>Ruang Kerja Farmasi</h1><p>Pendaftaran, kesiapan obat, label, dan verifikasi penerimaan dalam satu alur kerja.</p></div><div class="hero-actions"><button id="homeRegister" class="primary-btn">＋ Daftarkan Pengantaran</button><button id="homeRefresh" class="secondary-btn">↻ Segarkan</button></div></section>
       <section class="section"><div id="farmasiIncidentBanner"></div><div id="farmasiHomeMetrics" class="grid grid-4">${metric('Memuat','—','Mengambil data hari ini')}</div></section>
       <section class="section"><div class="section-head"><div><h2>Perlu Tindakan</h2><p>Prioritas kerja yang membutuhkan perhatian petugas.</p></div></div><div id="farmasiAttention" class="grid grid-2"></div></section>`;
     document.getElementById('homeRegister')?.addEventListener('click', () => ctx.navigate('registration'));

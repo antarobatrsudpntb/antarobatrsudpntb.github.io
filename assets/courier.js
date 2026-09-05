@@ -139,7 +139,7 @@ export function createCourierModule(ctx) {
   }
 
   async function renderHome() {
-    page().innerHTML = `<section class="hero compact brand-hero"><div><div class="eyebrow">KURIR</div><h1>Pengantaran Hari Ini</h1><p>Ambil paket sesuai arah perjalanan, buka navigasi, hubungi penerima, dan selesaikan pengantaran dengan verifikasi penerimaan.</p></div><img class="hero-brand-mascot" src="./icons/mascot-melesat.png" alt="" aria-hidden="true"><div class="hero-actions"><button id="courierHomeRefresh" class="secondary-btn">↻ Segarkan</button></div></section>
+    page().innerHTML = `<section class="hero compact"><div><div class="eyebrow">KURIR</div><h1>Pengantaran Hari Ini</h1><p>Ambil paket sesuai arah perjalanan, buka navigasi, hubungi penerima, dan selesaikan pengantaran dengan verifikasi penerimaan.</p></div><div class="hero-actions"><button id="courierHomeRefresh" class="secondary-btn">↻ Segarkan</button></div></section>
       <section class="section"><div id="courierHomeIncident"></div><div id="courierMetrics" class="grid grid-4"><div class="inline-loading">Memuat…</div></div></section>
       <section class="section"><div class="section-heading"><div><h2>Fokus Sekarang</h2><p>Aksi yang paling sering dibutuhkan Kurir.</p></div></div><div id="courierFocus" class="grid grid-2"></div></section>
       <section class="section"><div class="section-heading"><div><h2>Wilayah Siap Terbanyak</h2><p>Membantu memilih paket yang searah dengan perjalanan.</p></div></div><div id="courierRouteSummary" class="grid grid-3"></div></section>`;
