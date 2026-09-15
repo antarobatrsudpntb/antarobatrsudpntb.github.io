@@ -26,7 +26,7 @@ check(backend.includes('backendProvider === "apps-script" ? appsScript : firebas
 check(["login", "callFunction", "ping", "subscribeWorkspaceSignals"].every(x => backend.includes(`function ${x}`)), "provider contract utama tersedia");
 check(gas.includes("workspaceSignals") && gas.includes("document.visibilityState") && gas.includes("interactionBusy") && gas.includes("melesat:update-pending"), "Apps Script memakai adaptive revision polling aman terhadap form");
 check(gas.includes("12_000") && gas.includes("30_000") && gas.includes("45_000"), "profil polling role-aware tersedia");
-check(gas.includes("iframe") && gas.includes("postMessage") && gas.includes("nonce"), "Apps Script RPC memakai iframe/postMessage + nonce");
+check(gas.includes("iframe") && gas.includes('addEventListener("message"') && gas.includes("nonce"), "Apps Script RPC memakai iframe/message listener + nonce");
 check(fb.includes("onSnapshot") && fb.includes("workspaceSignals"), "Firebase tetap memakai realtime workspace signal");
 check(app.includes("Data baru tersedia") && app.includes("melesat:update-pending"), "UI memberi notifikasi perubahan tanpa menghapus input");
 check(app.includes("Master Wilayah Pulau Lombok") && app.includes("regency-folders"), "Master 623 dikelompokkan per kabupaten/kota");
