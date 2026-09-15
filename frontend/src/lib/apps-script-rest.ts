@@ -100,9 +100,16 @@ function rpc<T = Record<string, unknown>>(method: string, data: Record<string, u
       window.setTimeout(() => iframe.remove(), 0);
     };
     const onMessage = (event: MessageEvent<RpcResponse>) => {
-      if (event.source !== iframe.contentWindow) return;
-      const message = event.data;
-      if (!message || message.type !== MESSAGE_TYPE || message.id !== id || message.nonce !== nonce) return;
+  const message = event.data;
+
+  const googleOrigin =
+    event.origin === "null" ||
+    /^https:\/\/script\.google\.com$/.test(event.origin) ||
+    /^https:\/\/script\.googleusercontent\.com$/.test(event.origin) ||
+    /^https:\/\/[^/]+\.googleusercontent\.com$/.test(event.origin);
+
+  if (!googleOrigin) return;
+  if (!message || message.type !== MESSAGE_TYPE || message.id !== id || message.nonce !== nonce) return;
       cleanup();
       if (!message.ok) {
         const error = new Error(message.error?.message || "Permintaan Apps Script gagal.");
