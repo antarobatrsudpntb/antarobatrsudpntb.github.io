@@ -100,16 +100,14 @@ function rpc<T = Record<string, unknown>>(method: string, data: Record<string, u
       window.setTimeout(() => iframe.remove(), 0);
     };
     const onMessage = (event: MessageEvent<RpcResponse>) => {
-  const message = event.data;
-
-  const googleOrigin =
-    event.origin === "null" ||
-    /^https:\/\/script\.google\.com$/.test(event.origin) ||
-    /^https:\/\/script\.googleusercontent\.com$/.test(event.origin) ||
-    /^https:\/\/[^/]+\.googleusercontent\.com$/.test(event.origin);
-
-  if (!googleOrigin) return;
-  if (!message || message.type !== MESSAGE_TYPE || message.id !== id || message.nonce !== nonce) return;
+      const message = event.data;
+      const googleOrigin =
+        event.origin === "null" ||
+        /^https:\/\/script\.google\.com$/.test(event.origin) ||
+        /^https:\/\/script\.googleusercontent\.com$/.test(event.origin) ||
+        /^https:\/\/[^/]+\.googleusercontent\.com$/.test(event.origin);
+      if (!googleOrigin) return;
+      if (!message || message.type !== MESSAGE_TYPE || message.id !== id || message.nonce !== nonce) return;
       cleanup();
       if (!message.ok) {
         const error = new Error(message.error?.message || "Permintaan Apps Script gagal.");
@@ -167,6 +165,7 @@ export function isEmulator() {
 }
 
 function interactionBusy() {
+  if (document.documentElement.classList.contains("melesat-interaction-busy")) return true;
   const active = document.activeElement as HTMLElement | null;
   const tag = active?.tagName?.toLowerCase();
   if (tag === "input" || tag === "textarea" || tag === "select" || active?.isContentEditable) return true;
