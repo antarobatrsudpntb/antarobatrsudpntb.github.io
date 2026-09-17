@@ -1,4 +1,5 @@
 import { Component, ErrorInfo, FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Activity, Archive, ArrowRight, Bike, Building2, CalendarDays, Check,
   ChevronDown, ChevronRight, ClipboardCheck, Clock3, Edit3, Eye, EyeOff, FileClock, FileText,
@@ -172,7 +173,7 @@ class ViewBoundary extends Component<{ children: ReactNode }, { error: string }>
 
 function ToastView({ toast }: { toast: Toast }) {
   if (!toast) return null;
-  return <div className={`toast toast--${toast.type}`}>{toast.type === "success" ? <Check /> : <TriangleAlert />}<span>{toast.message}</span></div>;
+  return createPortal(<div className={`toast toast--${toast.type}`}>{toast.type === "success" ? <Check /> : <TriangleAlert />}<span>{toast.message}</span></div>, document.body);
 }
 
 function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
@@ -341,7 +342,7 @@ function TodayDeliveryRow({ row, actions }: { row: Row; actions: ReactNode }) {
     <div className="today-time"><strong>{timeLabel}</strong><small>{deliveryCode(row)}</small></div>
     <div className="today-patient"><strong>{deliveryName(row)}</strong><span>No. RM {get(row, "rm", "No RM") || "—"}</span><small>{systemId(row)}</small></div>
     <div className="today-area"><strong>{villageOf(row)}</strong><span>{[get(row, "districtSnapshot", "Kecamatan"), get(row, "regencySnapshot", "Kabupaten/Kota")].filter(Boolean).join(" • ")}</span></div>
-    <div className="today-status"><Badge status={statusOf(row)} /></div>
+    <div className="today-status"><Badge status={statusOf(row)} />{Number(get(row, "attemptCount", "attemptNo") || 1) > 1 && <span className="attempt-note">Pengantaran ke-{Number(get(row, "attemptCount", "attemptNo"))}</span>}</div>
     <div className="today-actions">{actions}</div>
   </article>;
 }
@@ -477,7 +478,9 @@ function FarmasiView({ active, data, areas, incidents, operationalOptions, onRef
     finally { setBusy(false); }
   }
   async function act(name: string, payload: Row, success: string, waTitle = "Pesan WhatsApp siap") {
-    setBusy(true); try { const result = await callFunction<Row>(name, payload); setWaDialog(whatsAppDialogFromResult(waTitle, result)); onMutation(result); show("success", success); return result; } catch (e) { show("error", e instanceof Error ? e.message : "Aksi gagal."); return null; } finally { setBusy(false); }
+    const current = payload.id ? data.find(row => rowId(row) === String(payload.id)) : null;
+    const requestPayload = current && get(current, "stateVersion") ? { ...payload, expectedVersion: get(current, "stateVersion") } : payload;
+    setBusy(true); try { const result = await callFunction<Row>(name, requestPayload); setWaDialog(whatsAppDialogFromResult(waTitle, result)); onMutation(result); show("success", success); return result; } catch (e) { show("error", e instanceof Error ? e.message : "Aksi gagal."); return null; } finally { setBusy(false); }
   }
 
   function openEdit(row: Row) {
@@ -643,9 +646,11 @@ function KurirView({ active, data, user, incident, operationalOptions, onRefresh
   const historyRows = data.filter((row) => [STATUS.DELIVERED, STATUS.FAILED].includes(baseStatusOf(row)));
   const grouped = Object.entries(Object.groupBy(ready, row => [get(row, "region"), get(row, "district"), villageOf(row)].filter(Boolean).join(" • ")));
   async function act(name: string, payload: Row, success: string, waTitle = "Pesan pasien siap") {
+    const current = payload.id ? data.find(row => rowId(row) === String(payload.id)) : null;
+    const requestPayload = current && get(current, "stateVersion") ? { ...payload, expectedVersion: get(current, "stateVersion") } : payload;
     setBusy(true);
     try {
-      const result = await callFunction<Row>(name, payload);
+      const result = await callFunction<Row>(name, requestPayload);
       if (result.codeInvalid || result.codeLocked) {
         const message = String(result.backendMessage || "Kode penerimaan tidak valid.");
         setCompleteError(message); show("error", message); return result;
@@ -774,7 +779,7 @@ function KurirView({ active, data, user, incident, operationalOptions, onRefresh
   return <div className="content-stack"><section className="courier-hero"><div><span className="eyebrow">RUANG KERJA KURIR</span><h2>Rute jelas, tindakan cepat.</h2><p>Ambil paket per wilayah, buka tujuan setelah klaim, lalu selesaikan setiap pengantaran dari HP.</p></div><div className="route-icon"><Bike /></div></section><div className="stats-grid courier-stats"><ActionStatCard icon={<PackageOpen />} label="Siap diambil" value={ready.length} note="Identitas masih terkunci" onClick={() => navigate("ready")} /><ActionStatCard icon={<Bike />} label="Tugas aktif" value={mine.length} note="Lanjutkan pengantaran" tone="purple" onClick={() => navigate("my-tasks")} /><ActionStatCard icon={<PackageCheck />} label="Ditangani hari ini" value={historyRows.length} note={`${historyRows.filter(row => baseStatusOf(row) === STATUS.DELIVERED).length} berhasil • ${historyRows.filter(row => baseStatusOf(row) === STATUS.FAILED).length} gagal`} tone="green" onClick={() => navigate("history")} /><ActionStatCard icon={<TriangleAlert />} label="Kendala aktif" value={incident ? 1 : 0} note={incident ? "Perlu diselesaikan" : "Perjalanan aman"} tone="orange" onClick={() => navigate("incidents")} /></div><div className="courier-next"><span><Route /></span><div><strong>{mine.length ? `${mine.length} tugas perlu diselesaikan` : ready.length ? `${ready.length} paket siap dipilih` : "Belum ada tugas baru"}</strong><p>{mine.length ? "Buka Tugas Saya untuk Maps, WhatsApp, telepon, dan penyelesaian paket." : ready.length ? "Buka Siap Diambil dan pilih paket sesuai rute perjalanan." : "Antrean baru akan muncul otomatis."}</p></div><button className="primary-button" onClick={() => navigate(mine.length ? "my-tasks" : "ready")}><ArrowRight /> Buka</button></div></div>;
 }
 
-function AdminView({ active, data, areas, accounts, retention, health, currentUser, operationalSettings, onRefresh, onLogout, navigate, show }: { active: string; data: Row[]; areas: Row[]; accounts: Row[]; retention: Row | null; health: Row; currentUser: AppUser; operationalSettings: Row; onRefresh: () => void; onLogout: () => void; navigate: (id: string) => void; show: (type: "success" | "error", message: string) => void }) {
+function AdminView({ active, data, areas, areaCount, transactionCount, activeAccountCount, accounts, retention, health, currentUser, operationalSettings, onRefresh, onLogout, navigate, show }: { active: string; data: Row[]; areas: Row[]; areaCount: number; transactionCount: number; activeAccountCount: number; accounts: Row[]; retention: Row | null; health: Row; currentUser: AppUser; operationalSettings: Row; onRefresh: () => void; onLogout: () => void; navigate: (id: string) => void; show: (type: "success" | "error", message: string) => void }) {
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [expandedRegencies, setExpandedRegencies] = useState<Set<string>>(() => new Set(["Kota Mataram"]));
@@ -1116,7 +1121,7 @@ function AdminView({ active, data, areas, accounts, retention, health, currentUs
 
   if (active === "accounts") return <div className="content-stack"><SectionTitle title="Akun & Akses" text="Kelola profil, peran, status, dan PIN tanpa pernah menampilkan PIN atau hash." action={<button className="primary-button" onClick={openCreateAccount}><Plus /> Tambah Akun</button>} />
     <div className="table-card account-table"><table><thead><tr><th>Petugas</th><th>Username</th><th>Peran</th><th>Status</th><th>Aksi</th></tr></thead><tbody>{accounts.map((row) => <tr key={rowId(row) || get(row, "username")}><td><strong>{get(row, "name", "Nama")}</strong><small>{get(row, "pinConfigured") ? "PIN tersimpan aman" : "PIN belum tersedia"}</small></td><td><code>{get(row, "username", "Username")}</code></td><td>{get(row, "role", "Role")}</td><td><Badge status={get(row, "active", "Aktif") === false ? "NONAKTIF" : "AKTIF"} /></td><td><div className="row-actions"><button className="secondary-button small" onClick={() => openEditAccount(row)}><Edit3 /> Kelola</button><button className="secondary-button small" onClick={() => openPinAccount(row)}><KeyRound /> Ganti PIN</button></div></td></tr>)}</tbody></table></div>{accountModal}</div>;
-  if (active === "areas") return <div className="content-stack"><SectionTitle title="Master Wilayah Pulau Lombok" text={`${areas.length.toLocaleString("id-ID")} Desa/Kelurahan Golden Master. Admin mengatur cakupan dan biaya tanpa menambah/menghapus identitas wilayah.`} />
+  if (active === "areas") return <div className="content-stack"><SectionTitle title="Master Wilayah Pulau Lombok" text={`${(areaCount || areas.length).toLocaleString("id-ID")} Desa/Kelurahan Golden Master. Admin mengatur cakupan dan biaya tanpa menambah/menghapus identitas wilayah.`} />
     <div className="area-toolbar"><div className="filter-line"><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari desa, kecamatan, kabupaten…" /></div></div>
     {filteredAreas.length ? <div className="regency-folders">{groupedAreas.map(([regency, rows]) => { const open = Boolean(query.trim()) || expandedRegencies.has(regency); const activeCount = rows?.filter(area => get(area, "coverageStatus") === "AKTIF").length || 0; return <section className={`regency-folder ${open ? "open" : ""}`} key={regency}><button className="regency-folder-head" type="button" onClick={() => toggleRegency(regency)} aria-expanded={open}><span className="folder-icon">{open ? <FolderOpen /> : <Folder />}</span><span><strong>{regency}</strong><small>{rows?.length || 0} Desa/Kelurahan • {activeCount} aktif</small></span><ChevronDown /></button>{open && <div className="area-grid">{rows?.map((a) => { const id = areaKey(a); const policy = String(get(a, "feePolicy")); return <article className="area-card" key={id}><div className="area-card-head"><div><small>{get(a, "district")}</small><h3>{get(a, "village")}</h3><p>Kode {get(a, "kodeWilayah", "officialCode") || id}{get(a, "kodePos", "postalCode") ? ` • Kode Pos ${get(a, "kodePos", "postalCode")}` : ""}</p></div><button className="area-edit" onClick={() => openEditArea(a)} aria-label={`Kelola ${get(a, "village")}`}><Edit3 /></button></div><div><Badge status={String(get(a, "coverageStatus"))} /><span className="fee">{policy === "SUBSIDI" ? `Tarif ${money(get(a, "baseDeliveryFee"))} • Subsidi ${money(get(a, "subsidyAmount"))} • Pasien ${money(get(a, "patientFee"))}` : `${policy} • ${money(get(a, "patientFee"))}`}</span></div></article>; })}</div>}</section>; })}</div> : <Empty icon={<MapPin />} title={areas.length ? "Wilayah tidak ditemukan" : "Master wilayah masih kosong"} text={areas.length ? "Ubah kata pencarian untuk melihat wilayah lain." : "Jalankan seed Master Pulau Lombok lalu muat ulang halaman."} />}{areaModal}</div>;
   if (active === "settings") return <div className="content-stack"><SectionTitle title="Pengaturan Operasional & WhatsApp" text="Admin dapat mengubah pilihan kerja dan seluruh template WhatsApp tanpa membuka source code." />
@@ -1133,7 +1138,7 @@ function AdminView({ active, data, areas, accounts, retention, health, currentUs
   const healthStatus = String(get(health, "status") || "PERLU PERHATIAN");
   const healthOk = healthStatus === "AMAN";
   const healthHeld = healthStatus === "OPERASIONAL DITAHAN";
-  return <div className="content-stack"><section className={`health-banner ${healthOk ? "ok" : "bad"}`}><div><span>{healthOk ? <ShieldCheck /> : <TriangleAlert />}</span><div><small>KONDISI SISTEM</small><h2>{healthStatus}</h2><p>{String(get(health, "recommendation") || "Periksa status sistem sebelum melanjutkan.")}</p><small>Backup: {dateText(String(get(health, "lastBackupAt") || "")) || "belum ada"} • Checkpoint: {dateText(String(get(health, "lastCheckpointAt") || "")) || "belum ada"} • Arsip: {String(get(get(health, "archive") || {}, "status") || "—")}</small></div></div><Badge status={healthHeld ? "DITAHAN" : healthOk ? "AMAN" : "PERLU PERHATIAN"} /></section><div className="stats-grid"><StatCard icon={<Users />} label="Akun aktif" value={accounts.filter((a) => get(a, "active", "Aktif") !== false).length} /><StatCard icon={<MapPin />} label="Desa/Kelurahan" value={areas.length} tone="green" /><StatCard icon={<PackageOpen />} label="Transaksi operasional" value={data.length} tone="orange" /><StatCard icon={<Archive />} label="Kebijakan archive" value="KEEP" note="Selama aplikasi digunakan" tone="purple" /></div><SectionTitle title="Pusat kendali Admin" text="Operasi normal dapat dikelola langsung dari aplikasi." /><div className="admin-shortcuts">{navByRole.ADMIN.slice(1).map((n) => <button key={n.id} onClick={() => navigate(n.id)}><span>{n.icon}</span><div><strong>{n.label}</strong><small>Buka pengaturan</small></div><ChevronRight /></button>)}</div></div>;
+  return <div className="content-stack"><section className={`health-banner ${healthOk ? "ok" : "bad"}`}><div><span>{healthOk ? <ShieldCheck /> : <TriangleAlert />}</span><div><small>KONDISI SISTEM</small><h2>{healthStatus}</h2><p>{String(get(health, "recommendation") || "Periksa status sistem sebelum melanjutkan.")}</p><small>Backup: {dateText(String(get(health, "lastBackupAt") || "")) || "belum ada"} • Checkpoint: {dateText(String(get(health, "lastCheckpointAt") || "")) || "belum ada"} • Arsip: {String(get(get(health, "archive") || {}, "status") || "—")}</small></div></div><Badge status={healthHeld ? "DITAHAN" : healthOk ? "AMAN" : "PERLU PERHATIAN"} /></section><div className="stats-grid"><StatCard icon={<Users />} label="Akun aktif" value={activeAccountCount || accounts.filter((a) => get(a, "active", "Aktif") !== false).length} /><StatCard icon={<MapPin />} label="Desa/Kelurahan" value={areaCount || areas.length} tone="green" /><StatCard icon={<PackageOpen />} label="Transaksi operasional" value={transactionCount || data.length} tone="orange" /><StatCard icon={<Archive />} label="Kebijakan archive" value="KEEP" note="Selama aplikasi digunakan" tone="purple" /></div><SectionTitle title="Pusat kendali Admin" text="Operasi normal dapat dikelola langsung dari aplikasi." /><div className="admin-shortcuts">{navByRole.ADMIN.slice(1).map((n) => <button key={n.id} onClick={() => navigate(n.id)}><span>{n.icon}</span><div><strong>{n.label}</strong><small>Buka pengaturan</small></div><ChevronRight /></button>)}</div></div>;
 }
 
 function ManagementView({ active, dashboard, range, setRange, reload }: { active: string; dashboard: Row; range: { startDate: string; endDate: string; reportBasis: string }; setRange: (r: any) => void; reload: () => void }) {
@@ -1272,6 +1277,9 @@ function AppShell({ user, onLogout }: { user: AppUser; onLogout: () => void }) {
   const setRealtime = useCallback((_status: RealtimeStatus) => undefined, []);
   const [deliveries, setDeliveries] = useState<Row[]>([]);
   const [areas, setAreas] = useState<Row[]>([]);
+  const [areaCount, setAreaCount] = useState(0);
+  const [transactionCount, setTransactionCount] = useState(0);
+  const [activeAccountCount, setActiveAccountCount] = useState(0);
   const [incidents, setIncidents] = useState<Row[]>([]);
   const [incident, setIncident] = useState<Row | null>(null);
   const [accounts, setAccounts] = useState<Row[]>([]);
@@ -1298,25 +1306,28 @@ function AppShell({ user, onLogout }: { user: AppUser; onLogout: () => void }) {
         setDeliveries([...(workspace.ready || []), ...(workspace.mine || []), ...(workspace.history || [])]);
         setIncident(workspace.incident || null); setOperationalOptions(workspace.operationalOptions || {});
       } else if (user.role === "ADMIN") {
-        const [rowResult, areaResult, accountResult, retentionResult, settingsResult, healthResult] = await Promise.all([
-          callFunction<{ rows: Row[] }>("adminRows"), callFunction<{ areas: Row[] }>("adminServiceAreas"),
-          callFunction<Row>("adminAccounts"), callFunction<Row>("adminRetentionStatus"), callFunction<Row>("adminOperationalSettings"), callFunction<Row>("adminSystemHealth"),
-        ]);
-        const accountSummary = accountResult.accounts;
-        const accountRows = Array.isArray(accountSummary)
-          ? accountSummary
-          : Array.isArray(accountSummary?.accounts)
-            ? accountSummary.accounts
-            : Array.isArray(accountResult.rows)
-              ? accountResult.rows
-              : [];
-        setDeliveries(rowResult.rows || []); setAreas(areaResult.areas || []);
-        setAccounts(accountRows); setRetention(retentionResult.retention || retentionResult); setOperationalSettings(settingsResult); setOperationalOptions(settingsResult.optionGroups || {}); setAdminHealth(healthResult.health || healthResult || {});
+        if (active === "home") {
+          const summary = await callFunction<Row>("adminDashboardSummary");
+          setAreaCount(Number(summary.areaCount || 0)); setTransactionCount(Number(summary.transactionCount || 0)); setActiveAccountCount(Number(summary.activeAccounts || 0)); setAdminHealth(summary.health || {});
+        } else if (active === "accounts") {
+          const accountResult = await callFunction<Row>("adminAccounts"); const accountSummary = accountResult.accounts;
+          const accountRows = Array.isArray(accountSummary) ? accountSummary : Array.isArray(accountSummary?.accounts) ? accountSummary.accounts : Array.isArray(accountResult.rows) ? accountResult.rows : [];
+          setAccounts(accountRows); setActiveAccountCount(accountRows.filter((a: Row) => get(a, "active", "Aktif") !== false).length);
+        } else if (active === "areas") {
+          const areaResult = await callFunction<{ areas: Row[]; count?: number }>("adminServiceAreas"); setAreas(areaResult.areas || []); setAreaCount(Number(areaResult.count || 0));
+        } else if (active === "transactions") {
+          const rowResult = await callFunction<{ rows: Row[] }>("adminRows"); setDeliveries(rowResult.rows || []); setTransactionCount(rowResult.rows?.length || 0);
+        } else if (active === "settings") {
+          const settingsResult = await callFunction<Row>("adminOperationalSettings"); setOperationalSettings(settingsResult); setOperationalOptions(settingsResult.optionGroups || {});
+        } else if (active === "archive") {
+          const [retentionResult, healthResult] = await Promise.all([callFunction<Row>("adminRetentionStatus"), callFunction<Row>("adminSystemHealth")]);
+          setRetention(retentionResult.retention || retentionResult); setAdminHealth(healthResult.health || healthResult || {});
+        }
       }
       setHealthy(true);
     } catch (e) { setHealthy(false); if (!quiet) show("error", e instanceof Error ? e.message : "Data gagal dimuat."); }
     finally { if (quiet) setBackgroundSyncing(false); else setBusy(false); }
-  }, [range, show, user.role]);
+  }, [range, show, user.role, active]);
 
   useEffect(() => { refresh(); }, [refresh]);
   useEffect(() => {
@@ -1339,6 +1350,22 @@ function AppShell({ user, onLogout }: { user: AppUser; onLogout: () => void }) {
     window.addEventListener("melesat:update-pending", handler);
     return () => window.removeEventListener("melesat:update-pending", handler);
   }, []);
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const deltas = ((event as CustomEvent<{ deltas?: Row[] }>).detail?.deltas || []) as Row[];
+      deltas.forEach(delta => {
+        const type = String(get(delta, "entityType")); const kind = String(get(delta, "kind")); const id = String(get(delta, "id")); const record = (get(delta, "record") || {}) as Row;
+        if (type === "DELIVERY" && id) setDeliveries(current => kind === "REMOVE" ? current.filter(row => rowId(row) !== id) : (() => { let found=false; const next=current.map(row => { if(rowId(row)!==id)return row; found=true; return {...row,...record}; }); return found?next:[record,...next]; })());
+        if (type === "INCIDENT" && id) {
+          setIncidents(current => kind === "REMOVE" ? current.filter(row => String(get(row,"id","incidentId")) !== id) : (() => { let found=false; const next=current.map(row => { if(String(get(row,"id","incidentId"))!==id)return row; found=true; return {...row,...record}; }); return found?next:[record,...next]; })());
+          if (user.role === "KURIR") setIncident(kind === "REMOVE" ? null : record);
+        }
+        if (type === "SERVICE_AREA" && id) setAreas(current => current.map(row => String(get(row, "areaId", "id")) === id ? {...row,...record} : row));
+      });
+    };
+    window.addEventListener("melesat:remote-delta", handler);
+    return () => window.removeEventListener("melesat:remote-delta", handler);
+  }, [user.role]);
   useEffect(() => {
     const context = window.modelContext as { registerTool?: (tool: Row) => void } | undefined;
     if (!context?.registerTool) return;
@@ -1388,7 +1415,7 @@ function AppShell({ user, onLogout }: { user: AppUser; onLogout: () => void }) {
   return <div className={`app-shell app-shell--${user.role.toLowerCase()}`}>
     <div className={mobileMenu ? "sidebar-drawer open" : "sidebar-drawer"}><div className="drawer-backdrop" onClick={() => setMobileMenu(false)} /><Sidebar user={user} active={active} setActive={navigate} onLogout={onLogout} badges={badges} /></div>
     <Sidebar user={user} active={active} setActive={navigate} onLogout={onLogout} badges={badges} />
-      <main className="workspace"><Topbar user={user} title={currentTitle} onMenu={() => setMobileMenu(true)} onRefresh={() => void refresh(false)} busy={busy || backgroundSyncing} />{dataUpdatePending && <div className="data-update-banner"><RefreshCw /><span>Data baru tersedia. Perubahan akan diterapkan setelah form atau popup ditutup.</span></div>}<div className="page-content"><ViewBoundary key={`${user.role}:${active}`}>{busy && !deliveries.length && !Object.keys(dashboard).length ? <Loading /> : user.role === "FARMASI" ? <FarmasiView active={active} data={deliveries} areas={areas} incidents={incidents} operationalOptions={operationalOptions} onRefresh={() => void refresh(true)} onMutation={applyMutationResult} navigate={navigate} show={show} /> : user.role === "KURIR" ? <KurirView active={active} data={deliveries} user={user} incident={incident} operationalOptions={operationalOptions} onRefresh={() => void refresh(true)} onMutation={applyMutationResult} navigate={navigate} show={show} /> : user.role === "ADMIN" ? <AdminView active={active} data={deliveries} areas={areas} accounts={accounts} retention={retention} health={adminHealth} currentUser={user} operationalSettings={operationalSettings} onRefresh={() => void refresh(true)} onLogout={onLogout} navigate={navigate} show={show} /> : <ManagementView active={active} dashboard={dashboard} range={range} setRange={setRange} reload={() => void refresh(false)} />}</ViewBoundary></div></main>
+      <main className="workspace"><Topbar user={user} title={currentTitle} onMenu={() => setMobileMenu(true)} onRefresh={() => void refresh(false)} busy={busy || backgroundSyncing} />{dataUpdatePending && <div className="data-update-banner"><RefreshCw /><span>Data baru tersedia. Perubahan akan diterapkan setelah form atau popup ditutup.</span></div>}<div className="page-content"><ViewBoundary key={`${user.role}:${active}`}>{busy && !deliveries.length && !Object.keys(dashboard).length ? <Loading /> : user.role === "FARMASI" ? <FarmasiView active={active} data={deliveries} areas={areas} incidents={incidents} operationalOptions={operationalOptions} onRefresh={() => void refresh(true)} onMutation={applyMutationResult} navigate={navigate} show={show} /> : user.role === "KURIR" ? <KurirView active={active} data={deliveries} user={user} incident={incident} operationalOptions={operationalOptions} onRefresh={() => void refresh(true)} onMutation={applyMutationResult} navigate={navigate} show={show} /> : user.role === "ADMIN" ? <AdminView active={active} data={deliveries} areas={areas} areaCount={areaCount} transactionCount={transactionCount} activeAccountCount={activeAccountCount} accounts={accounts} retention={retention} health={adminHealth} currentUser={user} operationalSettings={operationalSettings} onRefresh={() => void refresh(true)} onLogout={onLogout} navigate={navigate} show={show} /> : <ManagementView active={active} dashboard={dashboard} range={range} setRange={setRange} reload={() => void refresh(false)} />}</ViewBoundary></div></main>
     <MobileNav role={user.role} active={active} setActive={navigate} badges={badges} /><ToastView toast={toast} />
   </div>;
 }

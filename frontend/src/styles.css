@@ -154,7 +154,7 @@ button:disabled { opacity: .5; cursor: wait; transform: none !important; box-sha
 .view-error p { margin: 0 0 16px; color: #7c5a5a; font-size: 12px; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.toast { position: fixed; right: 26px; bottom: 26px; z-index: 100; max-width: min(440px, calc(100vw - 32px)); display: flex; align-items: center; gap: 11px; padding: 14px 17px; border-radius: 13px; color: white; box-shadow: 0 16px 38px rgba(0,0,0,.2); font-size: 13px; font-weight: 650; animation: toast-in .25s ease-out; }
+.toast { position: fixed; right: 26px; bottom: 26px; z-index: 220; max-width: min(440px, calc(100vw - 32px)); display: flex; align-items: center; gap: 11px; padding: 14px 17px; border-radius: 13px; color: white; box-shadow: 0 16px 38px rgba(0,0,0,.2); font-size: 13px; font-weight: 650; animation: toast-in .25s ease-out; }
 .toast--success { background: #087752; }
 .toast--error { background: #bd3737; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(10px); } }
