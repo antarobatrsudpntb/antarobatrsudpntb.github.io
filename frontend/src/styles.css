@@ -775,3 +775,11 @@ code { padding: 4px 7px; border-radius: 6px; background: #edf4f6; color: #315267
 .technician-panel{gap:16px}.tech-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.tech-grid article{display:flex;flex-direction:column;gap:9px;padding:14px;border:1px solid #d9e5ea;border-radius:14px;background:#fbfdfe}.tech-grid article p{margin:0;color:#667985;font-size:12px;line-height:1.45}.tech-grid input,.tech-grid select{width:100%}
 .tech-preview{display:flex;flex-direction:column;gap:12px;padding:14px;border:1px solid #efc9c9;border-radius:14px;background:#fffafa}.tech-preview pre{max-height:260px;overflow:auto;margin:0;padding:12px;border-radius:10px;background:#122330;color:#e6f1f5;font-size:11px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
 @media(max-width:900px){.cleanup-gates{grid-template-columns:repeat(2,minmax(0,1fr))}.tech-grid{grid-template-columns:1fr}.advanced-entry{align-items:flex-start;flex-direction:column}.advanced-entry>button{width:100%}}
+
+/* UAT Fix #4: transport diagnostics only appears when login health-check is offline. */
+.connection-diagnostics{margin-top:-4px;border:1px solid #dce7ef;border-radius:12px;background:#f8fbfd;color:#526779;font-size:12px;overflow:hidden}
+.connection-diagnostics summary{cursor:pointer;padding:9px 12px;font-weight:700;color:#35566f;list-style:none}
+.connection-diagnostics summary::-webkit-details-marker{display:none}
+.connection-diagnostics[open] summary{border-bottom:1px solid #e5edf3}
+.connection-diagnostics div{display:grid;gap:4px;padding:9px 12px;word-break:break-word}
+.connection-diagnostics span{display:block}

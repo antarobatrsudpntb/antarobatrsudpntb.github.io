@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
-  AppUser, callFunction, clearSession, getStoredSession, isEmulator,
+  AppUser, callFunction, clearSession, getStoredSession, getTransportDiagnostics, isEmulator,
   login, ping, requestId, Role, RealtimeStatus, subscribeWorkspaceSignals,
 } from "./lib/backend";
 
@@ -229,9 +229,15 @@ function LoginScreen({ onLogin }: { onLogin: (user: AppUser) => void }) {
   const [visible, setVisible] = useState(false);
   const [busy, setBusy] = useState(false);
   const [health, setHealth] = useState<"checking" | "online" | "offline">("checking");
+  const [transportDiag, setTransportDiag] = useState(() => getTransportDiagnostics());
   const { toast, show } = useToast();
 
-  useEffect(() => { ping().then(() => setHealth("online")).catch(() => setHealth("offline")); }, []);
+  useEffect(() => {
+    let active = true;
+    ping().then(() => { if (active) { setHealth("online"); setTransportDiag(getTransportDiagnostics()); } })
+      .catch(() => { if (active) { setHealth("offline"); setTransportDiag(getTransportDiagnostics()); } });
+    return () => { active = false; };
+  }, []);
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!username.trim() || pin.length < 4) return show("error", "Isi username dan PIN 4–6 angka.");
@@ -263,6 +269,7 @@ function LoginScreen({ onLogin }: { onLogin: (user: AppUser) => void }) {
         <Field label="PIN"><div className="input-wrap"><LockKeyhole /><input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 6))} type={visible ? "text" : "password"} placeholder="4–6 angka" inputMode="numeric" autoComplete="current-password" /><button type="button" className="icon-button" onClick={() => setVisible(!visible)} aria-label="Tampilkan PIN">{visible ? <EyeOff /> : <Eye />}</button></div></Field>
         <button className="primary-button primary-button--large" disabled={busy}>{busy ? <><LoaderCircle className="spin" /> Memeriksa…</> : <>Masuk <ArrowRight /></>}</button>
         <div className={`connection connection--${health}`}>{health === "online" ? <Wifi /> : health === "offline" ? <WifiOff /> : <LoaderCircle className="spin" />}<span>{health === "online" ? "Aplikasi siap digunakan" : health === "offline" ? "Layanan belum tersambung" : "Memeriksa koneksi…"}</span></div>
+        {health === "offline" && <details className="connection-diagnostics"><summary>Diagnostik koneksi</summary><div><span>Transport: {transportDiag.transport}</span><span>Endpoint: {transportDiag.endpointConfigured ? "terkonfigurasi" : "belum dikonfigurasi"}</span><span>RPC terakhir: {transportDiag.lastMethod || "healthCheck"}</span><span>Round-trip: {transportDiag.lastRoundTripMs ? `${transportDiag.lastRoundTripMs} ms` : "belum ada respons"}</span><span>Kode: {transportDiag.lastErrorCode || "—"}</span>{transportDiag.lastErrorMessage && <span>{transportDiag.lastErrorMessage}</span>}</div></details>}
         {isEmulator() && <details className="demo-box"><summary>Akun uji Emulator</summary><div><button type="button" onClick={() => { setUsername("farmasi_dev"); setPin("1234"); }}>Farmasi</button><button type="button" onClick={() => { setUsername("kurir_dev"); setPin("2345"); }}>Kurir</button><button type="button" onClick={() => { setUsername("admin_dev"); setPin("3456"); }}>Admin</button><button type="button" onClick={() => { setUsername("manajemen_dev"); setPin("4567"); }}>Manajemen</button></div></details>}
         <p className="help-text">PIN salah atau lupa? Hubungi Administrator MELESAT.</p>
       </form>
