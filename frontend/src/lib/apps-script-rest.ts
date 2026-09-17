@@ -11,6 +11,7 @@ type RpcResponse = {
   nonce?: string;
   bridgeReady?: boolean;
   bridgeVersion?: string;
+  bridgeNonce?: string;
   ok?: boolean;
   result?: unknown;
   error?: { code?: string; message?: string; data?: unknown };
@@ -86,8 +87,12 @@ function googleMessageOrigin(origin: string) {
 }
 
 let bridgeFrame: HTMLIFrameElement | null = null;
-let bridgeReady: Promise<void> | null = null;
+let bridgeIsReady = false;
+let bridgeReadyPromise: Promise<void> | null = null;
 let bridgeFailedUntil = 0;
+let bridgeNonce = "";
+const BRIDGE_WARMUP_TIMEOUT_MS = 1500;
+const BRIDGE_RETRY_COOLDOWN_MS = 10_000;
 const bridgePending = new Map<string, { nonce: string; resolve: (value: unknown) => void; reject: (reason: unknown) => void; timer: number }>();
 let bridgeListenerInstalled = false;
 let mutationInFlight = 0;
@@ -103,16 +108,23 @@ function releaseRpcSlot() {
   const next = rpcWaiters.shift(); if (next) next();
 }
 
+function bridgeTransportError(message: string, code: string) {
+  const error = new Error(message) as Error & { code?: string };
+  error.code = code;
+  return error;
+}
 
 function installBridgeListener() {
   if (bridgeListenerInstalled) return;
   bridgeListenerInstalled = true;
   window.addEventListener("message", (event: MessageEvent<RpcResponse>) => {
     if (!googleMessageOrigin(event.origin)) return;
+    if (bridgeFrame?.contentWindow && event.source !== bridgeFrame.contentWindow) return;
     const message = event.data;
-    if (!message || message.type !== MESSAGE_TYPE) return;
+    if (!message || message.type !== MESSAGE_TYPE || message.bridgeNonce !== bridgeNonce) return;
     if (message.bridgeReady) {
-      window.dispatchEvent(new CustomEvent("melesat:bridge-ready", { detail: { version: message.bridgeVersion || "3" } }));
+      bridgeIsReady = true;
+      window.dispatchEvent(new CustomEvent("melesat:bridge-ready", { detail: { version: message.bridgeVersion || "3.1", nonce: message.bridgeNonce } }));
       return;
     }
     if (!message.id || !message.nonce) return;
@@ -129,51 +141,87 @@ function installBridgeListener() {
   });
 }
 
-function bridgeUrl() {
+function bridgeUrl(nonce: string) {
   const separator = config.appsScriptUrl.includes("?") ? "&" : "?";
-  return `${config.appsScriptUrl}${separator}bridge=1&origin=${encodeURIComponent(window.location.origin)}`;
+  return `${config.appsScriptUrl}${separator}bridge=1&origin=${encodeURIComponent(window.location.origin)}&bridgeNonce=${encodeURIComponent(nonce)}`;
 }
 
-function ensureBridge(timeoutMs = 7000): Promise<void> {
+function invalidateBridge(cooldownMs = BRIDGE_RETRY_COOLDOWN_MS) {
+  bridgeIsReady = false;
+  bridgeReadyPromise = null;
+  bridgeFailedUntil = Date.now() + cooldownMs;
+  const oldFrame = bridgeFrame;
+  bridgeFrame = null;
+  bridgeNonce = "";
+  try { oldFrame?.remove(); } catch { /* noop */ }
+  window.setTimeout(() => { void startBridgeWarmup().catch(() => undefined); }, cooldownMs + 50);
+}
+
+function startBridgeWarmup(timeoutMs = BRIDGE_WARMUP_TIMEOUT_MS): Promise<void> {
   ensureConfigured();
-  if (Date.now() < bridgeFailedUntil) return Promise.reject(new Error("Bridge sedang fallback."));
-  if (bridgeFrame?.isConnected && bridgeReady) return bridgeReady;
+  if (bridgeIsReady && bridgeFrame?.isConnected) return Promise.resolve();
+  if (bridgeReadyPromise) return bridgeReadyPromise;
+  if (Date.now() < bridgeFailedUntil) return Promise.reject(bridgeTransportError("Bridge sedang fallback.", "BRIDGE_COOLDOWN"));
   installBridgeListener();
+
+  const nonce = crypto.randomUUID();
+  const frame = document.createElement("iframe");
+  frame.hidden = true;
+  frame.setAttribute("aria-hidden", "true");
+  frame.setAttribute("title", "MELESAT Apps Script Bridge");
+  frame.src = bridgeUrl(nonce);
   bridgeFrame?.remove();
-  bridgeFrame = document.createElement("iframe");
-  bridgeFrame.hidden = true;
-  bridgeFrame.setAttribute("aria-hidden", "true");
-  bridgeFrame.setAttribute("title", "MELESAT Apps Script Bridge");
-  bridgeFrame.src = bridgeUrl();
-  document.body.appendChild(bridgeFrame);
-  bridgeReady = new Promise<void>((resolve, reject) => {
-    const onReady = () => { cleanup(); resolve(); };
+  bridgeFrame = frame;
+  bridgeNonce = nonce;
+  bridgeIsReady = false;
+
+  bridgeReadyPromise = new Promise<void>((resolve, reject) => {
     const cleanup = () => {
       window.clearTimeout(timer);
       window.removeEventListener("melesat:bridge-ready", onReady as EventListener);
     };
+    const onReady = (event: Event) => {
+      const detail = (event as CustomEvent<{ nonce?: string }>).detail;
+      if (detail?.nonce !== nonce) return;
+      cleanup();
+      bridgeReadyPromise = null;
+      bridgeFailedUntil = 0;
+      resolve();
+    };
     const timer = window.setTimeout(() => {
       cleanup();
-      bridgeFailedUntil = Date.now() + 60_000;
-      reject(new Error("Persistent bridge belum siap."));
+      if (bridgeNonce === nonce) invalidateBridge();
+      reject(bridgeTransportError("Persistent bridge belum siap.", "BRIDGE_WARMUP_TIMEOUT"));
     }, timeoutMs);
-    window.addEventListener("melesat:bridge-ready", onReady as EventListener, { once: true });
+    window.addEventListener("melesat:bridge-ready", onReady as EventListener);
   });
-  return bridgeReady;
+  document.body.appendChild(frame);
+  return bridgeReadyPromise;
+}
+
+function scheduleBridgeWarmup() {
+  const start = () => { void startBridgeWarmup().catch(() => undefined); };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
+  else window.setTimeout(start, 0);
 }
 
 function bridgeRpc<T>(method: string, data: Record<string, unknown>, authToken: string, timeoutMs: number): Promise<T> {
-  return ensureBridge().then(() => new Promise<T>((resolve, reject) => {
-    if (!bridgeFrame?.contentWindow) return reject(new Error("Bridge Apps Script tidak tersedia."));
+  return new Promise<T>((resolve, reject) => {
+    if (!bridgeIsReady || !bridgeFrame?.contentWindow || !bridgeNonce) {
+      reject(bridgeTransportError("Bridge Apps Script belum siap.", "BRIDGE_UNAVAILABLE"));
+      return;
+    }
     const id = `rpc_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
     const nonce = crypto.randomUUID();
+    const activeBridgeNonce = bridgeNonce;
     const timer = window.setTimeout(() => {
       bridgePending.delete(id);
-      reject(new Error("Apps Script tidak merespons dalam batas waktu."));
+      if (bridgeNonce === activeBridgeNonce) invalidateBridge(3000);
+      reject(bridgeTransportError("Apps Script bridge tidak merespons dalam batas waktu.", "BRIDGE_TIMEOUT"));
     }, timeoutMs);
     bridgePending.set(id, { nonce, resolve: resolve as (value: unknown) => void, reject, timer });
-    bridgeFrame.contentWindow.postMessage({ type: MESSAGE_TYPE, id, nonce, origin: window.location.origin, method, token: authToken, data }, "*");
-  }));
+    bridgeFrame.contentWindow.postMessage({ type: MESSAGE_TYPE, id, nonce, bridgeNonce: activeBridgeNonce, origin: window.location.origin, method, token: authToken, data }, "*");
+  });
 }
 
 function legacyRpc<T>(method: string, data: Record<string, unknown>, authToken = "", timeoutMs = 25_000): Promise<T> {
@@ -209,17 +257,26 @@ function legacyRpc<T>(method: string, data: Record<string, unknown>, authToken =
   });
 }
 
+const BRIDGE_TRANSPORT_CODES = new Set(["BRIDGE_UNAVAILABLE", "BRIDGE_TIMEOUT", "BRIDGE_INVOCATION_ERROR", "BRIDGE_WARMUP_TIMEOUT", "BRIDGE_COOLDOWN", "BRIDGE_ERROR"]);
+
 async function rpc<T = Record<string, unknown>>(method: string, data: Record<string, unknown>, authToken = "", timeoutMs = 12_000): Promise<T> {
   await acquireRpcSlot();
   try {
-    try { return await bridgeRpc<T>(method, data, authToken, timeoutMs); }
-    catch (error) {
-      const code = String((error as Error & { code?: string })?.code || "");
-      if (code && !["BRIDGE_ERROR"].includes(code)) throw error;
-      return legacyRpc<T>(method, data, authToken, timeoutMs);
+    // Warm the persistent bridge in the background. A cold/failed bridge must never
+    // delay the current action: use the proven legacy POST transport immediately.
+    void startBridgeWarmup().catch(() => undefined);
+    if (bridgeIsReady) {
+      try { return await bridgeRpc<T>(method, data, authToken, timeoutMs); }
+      catch (error) {
+        const code = String((error as Error & { code?: string })?.code || "");
+        if (!BRIDGE_TRANSPORT_CODES.has(code)) throw error;
+      }
     }
+    return legacyRpc<T>(method, data, authToken, timeoutMs);
   } finally { releaseRpcSlot(); }
 }
+
+scheduleBridgeWarmup();
 
 export async function ping() { return rpc<Record<string, unknown>>("healthCheck", {}, getStoredSession()?.token || "", 7000); }
 

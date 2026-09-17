@@ -1,4 +1,4 @@
-﻿import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
@@ -27,6 +27,8 @@ check(["login", "callFunction", "ping", "subscribeWorkspaceSignals"].every(x => 
 check(gas.includes("workspaceSignals") && gas.includes("document.visibilityState") && gas.includes("interactionBusy") && gas.includes("melesat:update-pending"), "Apps Script memakai adaptive revision polling aman terhadap form");
 check(gas.includes("return 3000") && gas.includes("return 5000") && gas.includes("25_000") && gas.includes("Math.random()") && gas.includes("BroadcastChannel") && gas.includes("mutationInFlight > 0"), "profil polling adaptif Fix #3 tersedia");
 check(gas.includes("iframe") && gas.includes('addEventListener("message"') && gas.includes("nonce"), "Apps Script RPC memakai iframe/message listener + nonce");
+check(gas.includes("BRIDGE_WARMUP_TIMEOUT_MS = 1500") && gas.includes("scheduleBridgeWarmup") && gas.includes("if (bridgeIsReady)") && gas.includes("return legacyRpc<T>"), "Bridge 3.1 warm-up background dengan fallback POST tanpa tunggu");
+check(gas.includes("bridgeNonce") && gas.includes("event.source !== bridgeFrame.contentWindow"), "Bridge 3.1 memverifikasi source dan nonce handshake");
 check(fb.includes("onSnapshot") && fb.includes("workspaceSignals"), "Firebase tetap memakai realtime workspace signal");
 check(app.includes("Data baru tersedia") && app.includes("melesat:update-pending"), "UI memberi notifikasi perubahan tanpa menghapus input");
 check(app.includes("Master Wilayah Pulau Lombok") && app.includes("regency-folders"), "Master 623 dikelompokkan per kabupaten/kota");
@@ -46,4 +48,3 @@ if (failures.length) {
 }
 checks.forEach(x => console.log(`PASS  ${x}`));
 console.log(`SUMMARY: ${checks.length} PASS / 0 FAIL`);
-
