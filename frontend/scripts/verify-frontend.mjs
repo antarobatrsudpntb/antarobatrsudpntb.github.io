@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+﻿import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
@@ -25,7 +25,7 @@ const app = readFileSync(join(root, "src/App.tsx"), "utf8");
 check(backend.includes('backendProvider === "apps-script" ? appsScript : firebase'), "Golden Frontend memilih provider tanpa fork UI");
 check(["login", "callFunction", "ping", "subscribeWorkspaceSignals"].every(x => backend.includes(`function ${x}`)), "provider contract utama tersedia");
 check(gas.includes("workspaceSignals") && gas.includes("document.visibilityState") && gas.includes("interactionBusy") && gas.includes("melesat:update-pending"), "Apps Script memakai adaptive revision polling aman terhadap form");
-check(gas.includes("12_000") && gas.includes("30_000") && gas.includes("45_000"), "profil polling role-aware tersedia");
+check(gas.includes("return 3000") && gas.includes("return 5000") && gas.includes("25_000") && gas.includes("Math.random()") && gas.includes("BroadcastChannel") && gas.includes("mutationInFlight > 0"), "profil polling adaptif Fix #3 tersedia");
 check(gas.includes("iframe") && gas.includes('addEventListener("message"') && gas.includes("nonce"), "Apps Script RPC memakai iframe/message listener + nonce");
 check(fb.includes("onSnapshot") && fb.includes("workspaceSignals"), "Firebase tetap memakai realtime workspace signal");
 check(app.includes("Data baru tersedia") && app.includes("melesat:update-pending"), "UI memberi notifikasi perubahan tanpa menghapus input");
@@ -46,3 +46,4 @@ if (failures.length) {
 }
 checks.forEach(x => console.log(`PASS  ${x}`));
 console.log(`SUMMARY: ${checks.length} PASS / 0 FAIL`);
+
