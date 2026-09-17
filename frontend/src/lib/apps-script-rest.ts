@@ -119,7 +119,6 @@ function installBridgeListener() {
   bridgeListenerInstalled = true;
   window.addEventListener("message", (event: MessageEvent<RpcResponse>) => {
     if (!googleMessageOrigin(event.origin)) return;
-    if (bridgeFrame?.contentWindow && event.source !== bridgeFrame.contentWindow) return;
     const message = event.data;
     if (!message || message.type !== MESSAGE_TYPE || message.bridgeNonce !== bridgeNonce) return;
     if (message.bridgeReady) {
@@ -278,7 +277,31 @@ async function rpc<T = Record<string, unknown>>(method: string, data: Record<str
 
 scheduleBridgeWarmup();
 
-export async function ping() { return rpc<Record<string, unknown>>("healthCheck", {}, getStoredSession()?.token || "", 7000); }
+function firstSuccessful<T>(attempts: Array<Promise<T>>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let failed = 0;
+    let lastError: unknown = null;
+    attempts.forEach((attempt) => {
+      attempt.then(resolve).catch((error) => {
+        failed += 1;
+        lastError = error;
+        if (failed >= attempts.length) reject(lastError instanceof Error ? lastError : new Error("Layanan Apps Script belum merespons."));
+      });
+    });
+  });
+}
+
+export async function ping() {
+  const authToken = getStoredSession()?.token || "";
+  // Health check is read-only, so it is safe to race both transports. This avoids
+  // a false offline state while the persistent Apps Script bridge is still warming.
+  const bridgeAttempt = (async () => {
+    await startBridgeWarmup(2500);
+    return bridgeRpc<Record<string, unknown>>("healthCheck", {}, authToken, 5000);
+  })();
+  const legacyAttempt = legacyRpc<Record<string, unknown>>("healthCheck", {}, authToken, 7000);
+  return firstSuccessful([bridgeAttempt, legacyAttempt]);
+}
 
 export async function login(username: string, pin: string): Promise<AppUser> {
   const result = await rpc<{ token: string; session?: { maxAgeSeconds?: number; expiresAt?: string }; user: AppUser }>("loginWithPin", { username: username.trim(), pin }, "", 12_000);

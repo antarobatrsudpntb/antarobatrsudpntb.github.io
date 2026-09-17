@@ -28,7 +28,8 @@ check(gas.includes("workspaceSignals") && gas.includes("document.visibilityState
 check(gas.includes("return 3000") && gas.includes("return 5000") && gas.includes("25_000") && gas.includes("Math.random()") && gas.includes("BroadcastChannel") && gas.includes("mutationInFlight > 0"), "profil polling adaptif Fix #3 tersedia");
 check(gas.includes("iframe") && gas.includes('addEventListener("message"') && gas.includes("nonce"), "Apps Script RPC memakai iframe/message listener + nonce");
 check(gas.includes("BRIDGE_WARMUP_TIMEOUT_MS = 1500") && gas.includes("scheduleBridgeWarmup") && gas.includes("if (bridgeIsReady)") && gas.includes("return legacyRpc<T>"), "Bridge 3.1 warm-up background dengan fallback POST tanpa tunggu");
-check(gas.includes("bridgeNonce") && gas.includes("event.source !== bridgeFrame.contentWindow"), "Bridge 3.1 memverifikasi source dan nonce handshake");
+check(gas.includes("bridgeNonce") && gas.includes("googleMessageOrigin(event.origin)") && !gas.includes("event.source !== bridgeFrame.contentWindow"), "Bridge 3.2 menerima nested Apps Script sandbox dengan origin + nonce tervalidasi");
+check(gas.includes("firstSuccessful") && gas.includes("bridgeAttempt") && gas.includes("legacyAttempt"), "Health check 3.2 memakai first-success bridge/legacy agar tidak false offline");
 check(fb.includes("onSnapshot") && fb.includes("workspaceSignals"), "Firebase tetap memakai realtime workspace signal");
 check(app.includes("Data baru tersedia") && app.includes("melesat:update-pending"), "UI memberi notifikasi perubahan tanpa menghapus input");
 check(app.includes("Master Wilayah Pulau Lombok") && app.includes("regency-folders"), "Master 623 dikelompokkan per kabupaten/kota");
