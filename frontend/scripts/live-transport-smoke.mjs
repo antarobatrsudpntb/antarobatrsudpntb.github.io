@@ -1,4 +1,4 @@
-const pageUrlArg = process.argv[2] || process.env.PAGE_URL || "";
+﻿const pageUrlArg = process.argv[2] || process.env.PAGE_URL || "";
 if (!pageUrlArg) {
   console.error("LIVE SMOKE FAIL: PAGE_URL tidak tersedia.");
   process.exit(1);
@@ -62,7 +62,7 @@ const checks = [
   [!html.includes("<\\/script>"), "response tidak mengirim literal <\\/script>"],
   [html.includes(id), "response mengembalikan request id"],
   [html.includes(nonce), "response mengembalikan nonce"],
-  [html.includes('"ok":true'), "healthCheck live sukses"],
+  [html.includes('"ok":true') || /\\+x22ok\\+x22:true/.test(html), "healthCheck live sukses"],
   [html.includes("FORM_POST_V4"), "server live memakai transport Fix #4"],
 ];
 const failed = checks.filter(([ok]) => !ok);
