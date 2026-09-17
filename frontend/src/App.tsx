@@ -525,17 +525,32 @@ function FarmasiView({ active, data, areas, incidents, operationalOptions, onRef
   async function scheduleRedelivery(row: Row) {
     setBusy(true);
     try {
-      const plannedResult = await callFunction<Row>("planRedelivery", { requestId: requestId("plan"), id: rowId(row), payload: { scheduleDate: followupDate } });
-      onMutation(plannedResult);
-      if (followupDate === todayKey()) {
-        const result = await callFunction<Row>("createRedelivery", { requestId: requestId("redelivery"), id: rowId(row), payload: { scheduleDate: followupDate, phone: get(row, "phone", "No WhatsApp"), address: get(row, "address", "Alamat Lengkap"), landmark: get(row, "landmark", "Patokan Lokasi"), recipient: get(row, "recipientName", "Nama Penerima"), areaKey: get(row, "serviceAreaId", "areaKey"), courierNote: get(row, "courierNote", "Catatan Kurir") } });
-        onMutation(result);
+      const result = await callFunction<Row>("scheduleRedelivery", {
+        requestId: requestId("redelivery"),
+        id: rowId(row),
+        payload: {
+          scheduleDate: followupDate,
+          phone: get(row, "phone", "No WhatsApp"),
+          address: get(row, "address", "Alamat Lengkap"),
+          landmark: get(row, "landmark", "Patokan Lokasi"),
+          recipient: get(row, "recipientName", "Nama Penerima"),
+          areaKey: get(row, "serviceAreaId", "areaKey"),
+          courierNote: get(row, "courierNote", "Catatan Kurir"),
+        },
+      });
+      onMutation(result);
+      if (result.waAction) {
         setWaDialog(whatsAppDialogFromResult("Pengantaran ulang siap", result));
         show("success", "Pengantaran ke-2 siap masuk antrean Kurir dengan kode penerimaan baru.");
-      } else show("success", `Rencana pengantaran ulang disimpan untuk ${followupDate}.`);
+      } else {
+        show("success", `Rencana pengantaran ulang disimpan untuk ${followupDate}.`);
+      }
       setFollowupRow(null);
-    } catch (error) { show("error", error instanceof Error ? error.message : "Pengantaran ulang gagal diproses."); }
-    finally { setBusy(false); }
+    } catch (error) {
+      show("error", error instanceof Error ? error.message : "Pengantaran ulang gagal diproses.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   function printRecord(row: Row) {

@@ -23,6 +23,13 @@ export const config = {
 
 const KEY = "melesat.session.v1.apps-script";
 const MESSAGE_TYPE = "MELESAT_APPS_SCRIPT_RPC_V1";
+const MUTATION_METHODS = new Set([
+  "addDelivery", "pharmacyUpdateWaitingDelivery", "markReady", "claimTask", "setDeliveryPending",
+  "resumeDelivery", "completeTaskVerified", "failDelivery", "confirmReturnToPharmacy",
+  "failedFollowUpWhatsApp", "planRedelivery", "createRedelivery", "scheduleRedelivery", "markSelfPickup", "confirmSelfPickup",
+  "closeFailedCase", "manualVerifyReceipt", "reportCourierIncident", "resolveCourierIncident",
+  "adminVerifyCourierIncident", "verifyCourierIncident", "adminCorrectStatus",
+]);
 
 function ensureConfigured() {
   if (!/^https:\/\/script\.google\.com\/macros\/s\//.test(config.appsScriptUrl)) {
@@ -152,8 +159,28 @@ export async function login(username: string, pin: string): Promise<AppUser> {
   return result.user;
 }
 
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+}
+
 export async function callFunction<T = Record<string, unknown>>(name: string, data: Record<string, unknown> = {}): Promise<T> {
-  return rpc<T>(name, data, token());
+  const mutation = MUTATION_METHODS.has(name);
+  const attempts = mutation ? 3 : 1;
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const result = await rpc<T>(name, data, token(), mutation ? 12_000 : 25_000);
+      if (mutation) window.dispatchEvent(new CustomEvent("melesat:local-mutation", { detail: { method: name, at: Date.now() } }));
+      return result;
+    } catch (error) {
+      lastError = error;
+      const code = String((error as Error & { code?: string })?.code || "");
+      if (!mutation || !["SERVER_BUSY", "MUTATION_IN_PROGRESS"].includes(code) || attempt >= attempts - 1) throw error;
+      const jitter = 240 + attempt * 420 + Math.floor(Math.random() * 240);
+      await sleep(jitter);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Permintaan gagal.");
 }
 
 export function requestId(prefix = "web") {
@@ -191,6 +218,8 @@ export async function subscribeWorkspaceSignals(
   let signature = "";
   let unchanged = 0;
   let pending = false;
+  let localMutationAt = 0;
+  let reconcileTimer = 0;
   const base = role === "FARMASI" || role === "KURIR" ? 12_000 : role === "ADMIN" ? 30_000 : 45_000;
   const cap = role === "FARMASI" || role === "KURIR" ? 30_000 : 60_000;
 
@@ -226,7 +255,17 @@ export async function subscribeWorkspaceSignals(
       } else if (next && next !== signature) {
         signature = next;
         unchanged = 0;
-        if (interactionBusy()) {
+        const ownMutationWindow = localMutationAt > 0 && Date.now() - localMutationAt < 20_000;
+        if (ownMutationWindow) {
+          // Mutation lokal sudah mem-patch UI dari response server. Jangan langsung full-refresh lagi.
+          localMutationAt = 0;
+          pending = false;
+          emitPending(false);
+          window.clearTimeout(reconcileTimer);
+          reconcileTimer = window.setTimeout(() => {
+            if (!stopped && !interactionBusy() && document.visibilityState === "visible") onChange();
+          }, 20_000);
+        } else if (interactionBusy()) {
           pending = true;
           emitPending(true);
         } else {
@@ -257,16 +296,25 @@ export async function subscribeWorkspaceSignals(
     if (applyPendingIfSafe()) schedule(base);
   }, 80);
 
+  const onLocalMutation = (event: Event) => {
+    localMutationAt = Number((event as CustomEvent<{ at?: number }>).detail?.at || Date.now());
+    pending = false;
+    emitPending(false);
+  };
+
   document.addEventListener("visibilitychange", onVisibility);
   document.addEventListener("focusout", onFocusOut, true);
+  window.addEventListener("melesat:local-mutation", onLocalMutation);
   onStatus("connecting");
   void check();
 
   return () => {
     stopped = true;
     window.clearTimeout(timer);
+    window.clearTimeout(reconcileTimer);
     emitPending(false);
     document.removeEventListener("visibilitychange", onVisibility);
     document.removeEventListener("focusout", onFocusOut, true);
+    window.removeEventListener("melesat:local-mutation", onLocalMutation);
   };
 }
