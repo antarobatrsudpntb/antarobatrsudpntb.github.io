@@ -62,7 +62,7 @@ const checks = [
   [!html.includes("<\\/script>"), "response tidak mengirim literal <\\/script>"],
   [html.includes(id), "response mengembalikan request id"],
   [html.includes(nonce), "response mengembalikan nonce"],
-  [html.includes('"ok":true'), "healthCheck live sukses"],
+  [html.includes('"ok":true') || html.includes('\\x22ok\\x22:true'), "healthCheck live sukses"],
   [html.includes("FORM_POST_V4"), "server live memakai transport Fix #4"],
 ];
 const failed = checks.filter(([ok]) => !ok);
