@@ -45,8 +45,14 @@ check(!/waPreparedAt|waOpenedAt|resendOpenCount|lastOpenedAt/.test(wa + gas + ap
 check(app.includes("Pengantaran ke-") || app.includes("PENGANTARAN KE-"), "indikator attempt pengantaran tersedia");
 check(app.includes("Cetak / Simpan PDF") && !app.includes("Unduh CSV"), "laporan memakai print/PDF tanpa CSV");
 check(!/window\.(prompt|confirm|alert)\s*\(/.test(app), "workflow frontend bebas dialog native browser");
-check(sw.includes("fastcommitv2") && sw.includes('event.request.method !== "GET"') && sw.includes("url.origin !== self.location.origin"), "service worker versioned dan hanya cache GET same-origin");
+check(sw.includes("v1.1.1-minor-polish") && sw.includes('event.request.method !== "GET"') && sw.includes("url.origin !== self.location.origin"), "service worker minor-polish versioned dan hanya cache GET same-origin");
 check(fb.includes("onSnapshot") && fb.includes("workspaceSignals"), "Firebase compatibility/realtime reference tetap tersedia");
+check(!app.includes('label="Nama calon penerima"') && !app.includes('label="Patokan"') && app.includes('Catatan alamat untuk Kurir (opsional)'), "form pendaftaran dipangkas: penerima/patokan hilang, satu catatan Kurir opsional");
+check(app.includes('Detail (opsional)') && app.includes('Catatan penyelesaian (opsional)') && app.includes('KENDALA AKTIF'), "kendala menjadi informasi ringan tanpa verifikasi wajib");
+check(app.includes('Total tarif layanan') && app.includes('Komposisi Layanan Berdasarkan Pembiayaan') && app.includes('Berbayar penuh'), "bahasa pembiayaan Manajemen diperjelas");
+check(app.includes('Pengantaran ke-') && !app.includes('>Attempt<') && !app.includes('label="Attempt"') && !app.includes('title="Attempt"'), "istilah Attempt tidak ditampilkan sebagai label UI");
+check(app.includes('get(health, "adminActionRequired") === true') && app.includes('Layanan Berjalan Normal'), "status Admin normal tidak dipicu warning teknis");
+
 
 const dist = join(root, "dist");
 if (existsSync(dist)) {

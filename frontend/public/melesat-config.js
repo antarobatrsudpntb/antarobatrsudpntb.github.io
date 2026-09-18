@@ -1,4 +1,4 @@
-/*
+﻿/*
  * MELESAT FAST COMMIT V2 Frontend v1.1.0
  * Pilih satu backend tanpa mengubah UI/workflow.
  */
@@ -11,5 +11,6 @@ window.MELESAT_CONFIG = {
   apiKey: "GANTI_DENGAN_WEB_API_KEY_FIREBASE",
   region: "asia-southeast2",
   emulator: false,
-  appVersion: "1.1.0-UAT-FAST-COMMIT-V2",
+  appVersion: "1.1.1-UAT-MINOR-POLISH",
 };
+
