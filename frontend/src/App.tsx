@@ -9,11 +9,13 @@ import {
   RefreshCw, Route, Save, Search, ShieldCheck, Sparkles, TriangleAlert,
   UserCog, Users, WalletCards, Wifi, WifiOff, X,
 } from "lucide-react";
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   AppUser, callFunction, clearSession, getStoredSession, getTransportDiagnostics, isEmulator,
   login, ping, requestId, Role, RealtimeStatus, subscribeWorkspaceSignals,
 } from "./lib/backend";
+import { installFastV2UiFeedback } from "./lib/fast-v2-ui";
+
+installFastV2UiFeedback();
 
 type Row = Record<string, any>;
 type Toast = { type: "success" | "error"; message: string } | null;
@@ -67,6 +69,12 @@ function deliveryName(row: Row) { return String(get(row, "patientName", "Nama Pa
 function deliveryCode(row: Row) { return String(get(row, "packageCode", "Kode Paket", "deliveryCode", "ID Sistem", "id") || "—"); }
 function systemId(row: Row) { return String(get(row, "deliveryCode", "ID Sistem", "id") || "—"); }
 function rowId(row: Row) { return String(get(row, "id", "ID Sistem")); }
+function stateVersionOf(row: Row) { return Math.max(0, Number(get(row, "stateVersion", "version", "resultVersion") || 0)); }
+function mergeVersioned(current: Row, incoming: Row) {
+  const currentVersion = stateVersionOf(current), incomingVersion = stateVersionOf(incoming);
+  if (currentVersion > 0 && incomingVersion > 0 && incomingVersion < currentVersion) return current;
+  return { ...current, ...incoming };
+}
 function money(value: unknown) { return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(value || 0)); }
 function dateText(value: unknown) {
   if (!value) return "—";
@@ -410,7 +418,7 @@ function SafeQueueCard({ row, actions }: { row: Row; actions: ReactNode }) {
   return <article className="delivery-card safe-queue-card"><div className="delivery-head"><div><small>{deliveryCode(row)}</small><h3>{villageOf(row)}</h3></div><Badge status={statusOf(row)} /></div><div className="delivery-meta"><span><Building2 /> {get(row, "district") || "—"}</span><span><MapPin /> {get(row, "region") || "—"}</span><span><Clock3 /> {get(row, "readyAt") || "Siap sekarang"}</span></div><div className="privacy-lock"><LockKeyhole /><span><strong>Identitas pasien terkunci</strong><small>Nama, RM, alamat, kontak, dan Maps dibuka hanya setelah tugas berhasil diambil.</small></span></div><div className="delivery-foot"><span className="attempt-note">Pengantaran ke-{Number(get(row, "attemptNo") || 1)}</span>{actions}</div></article>;
 }
 
-function FarmasiView({ active, data, areas, incidents, operationalOptions, onRefresh, onMutation, navigate, show }: { active: string; data: Row[]; areas: Row[]; incidents: Row[]; operationalOptions: OperationalOptions; onRefresh: () => void; onMutation: (result: Row) => void; navigate: (id: string) => void; show: (type: "success" | "error", message: string) => void }) {
+function FarmasiView({ active, data, areas, incidents, operationalOptions, ensureAreas, onRefresh, onMutation, navigate, show }: { active: string; data: Row[]; areas: Row[]; incidents: Row[]; operationalOptions: OperationalOptions; ensureAreas: () => Promise<void>; onRefresh: () => void; onMutation: (result: Row) => void; navigate: (id: string) => void; show: (type: "success" | "error", message: string) => void }) {
   const [busy, setBusy] = useState(false);
   useInteractionGuard(busy);
   const [manualRows, setManualRows] = useState<Row[]>([]);
@@ -441,12 +449,15 @@ function FarmasiView({ active, data, areas, incidents, operationalOptions, onRef
   useEffect(() => {
     if (active === "verify") callFunction<{ rows: Row[] }>("getPendingReceiptVerifications").then((r) => setManualRows(r.rows || [])).catch((e) => show("error", e.message));
   }, [active, show]);
+  useEffect(() => {
+    if (active === "register" && !areas.length) void ensureAreas().catch((e) => show("error", e instanceof Error ? e.message : "Master wilayah gagal dimuat."));
+  }, [active, areas.length, ensureAreas, show]);
 
   function finishRegistration(result: Row, printWindow: Window | null) {
     const record = (result.record || {}) as Row;
     if (printWindow && Object.keys(record).length) printLabelWindow(printWindow, record); else printWindow?.close();
-    setWaDialog(whatsAppDialogFromResult("Pendaftaran berhasil", result, record, true));
     show("success", `Pengantaran ${deliveryCode(record)} berhasil didaftarkan.`);
+    void callFunction<Row>("prepareWhatsApp", { eventType: "REGISTER", id: rowId(record) }).then(wa => { const d = whatsAppDialogFromResult("Pendaftaran berhasil • WA kode dapat dikirim sekarang atau nanti", wa, record, true); if (d) setWaDialog(d); }).catch(() => undefined);
     setForm({ rm: "", name: "", phone: "", address: "", areaKey: "", landmark: "", recipient: "", courierNote: "", paymentConfirmed: false });
     onMutation(result);
   }
@@ -487,10 +498,17 @@ function FarmasiView({ active, data, areas, incidents, operationalOptions, onRef
   async function act(name: string, payload: Row, success: string, waTitle = "Pesan WhatsApp siap") {
     const current = payload.id ? data.find(row => rowId(row) === String(payload.id)) : null;
     const requestPayload = current && get(current, "stateVersion") ? { ...payload, expectedVersion: get(current, "stateVersion") } : payload;
-    setBusy(true); try { const result = await callFunction<Row>(name, requestPayload); setWaDialog(whatsAppDialogFromResult(waTitle, result)); onMutation(result); show("success", success); return result; } catch (e) { show("error", e instanceof Error ? e.message : "Aksi gagal."); return null; } finally { setBusy(false); }
+    setBusy(true); try {
+      const result = await callFunction<Row>(name, requestPayload);
+      const explicitWa = ["pharmacyRegistrationWaAction", "getManualReceiptConfirmationWaAction", "failedFollowUpWhatsApp"].includes(name);
+      if (explicitWa) setWaDialog(whatsAppDialogFromResult(waTitle, result));
+      onMutation(result); show("success", success);
+      return result;
+    } catch (e) { show("error", e instanceof Error ? e.message : "Aksi gagal."); return null; } finally { setBusy(false); }
   }
 
-  function openEdit(row: Row) {
+  async function openEdit(row: Row) {
+    try { await ensureAreas(); } catch (error) { show("error", error instanceof Error ? error.message : "Master wilayah gagal dimuat."); return; }
     const patientFee = Number(get(row, "deliveryFeeSnapshot", "Biaya Pengantaran") || 0);
     setEditRecord(row);
     setEditForm({
@@ -549,12 +567,8 @@ function FarmasiView({ active, data, areas, incidents, operationalOptions, onRef
         },
       });
       onMutation(result);
-      if (result.waAction) {
-        setWaDialog(whatsAppDialogFromResult("Pengantaran ulang siap", result));
-        show("success", "Pengantaran ke-2 siap masuk antrean Kurir dengan kode penerimaan baru.");
-      } else {
-        show("success", `Rencana pengantaran ulang disimpan untuk ${followupDate}.`);
-      }
+      show("success", `Pengantaran ulang disimpan untuk ${followupDate}.`);
+      void callFunction<Row>("prepareWhatsApp", { eventType: "REDELIVERY", id: rowId((result.record || row) as Row), attemptNo: get(result.attempt || {}, "attemptNo") || 2, scheduleDate: followupDate, snapshot: (result.record || row) as Row }).then(wa => { const d = whatsAppDialogFromResult("Pengantaran ulang siap", wa); if (d) setWaDialog(d); }).catch(() => undefined);
       setFollowupRow(null);
     } catch (error) {
       show("error", error instanceof Error ? error.message : "Pengantaran ulang gagal diproses.");
@@ -589,11 +603,10 @@ function FarmasiView({ active, data, areas, incidents, operationalOptions, onRef
     const state = operationalStateOf(followupRow);
     const attempt = (followupRow.attempt || {}) as Row;
     const attemptNo = Number(get(attempt, "attemptNo") || get(followupRow, "Jumlah Percobaan") || 1);
-    const waDone = Boolean(get(attempt, "followupWaAt"));
     return <Modal wide title={`Tindak lanjut ${deliveryCode(followupRow)}`} text={`Gagal antar ke-${attemptNo} • ${deliveryName(followupRow)}`} onClose={() => !busy && setFollowupRow(null)}>
       <div className="modal-form followup-form"><div className="failure-summary"><TriangleAlert /><div><strong>{get(attempt, "failureReason") || get(followupRow, "Alasan Gagal") || "Gagal antar"}</strong><p>{get(attempt, "failureDetail") || get(followupRow, "Catatan Gagal") || "Tanpa catatan tambahan"}</p></div></div>
       {state === "RETURN_WAITING" && <><div className="confirm-note warning"><PackageOpen /><p>Kurir sudah melaporkan gagal antar. Konfirmasi hanya setelah obat fisik benar-benar diterima kembali di Farmasi.</p></div><button className="primary-button" disabled={busy} onClick={() => followupAction("confirmReturnToPharmacy", { requestId: requestId("return"), id: rowId(followupRow) }, "Obat kembali ke Farmasi telah dikonfirmasi.")}><PackageCheck /> Konfirmasi Obat Sudah Kembali</button></>}
-      {["FOLLOW_UP", "REDELIVERY_PLANNED"].includes(state) && <><div className="followup-steps"><button className="secondary-button" disabled={busy} onClick={() => followupAction("failedFollowUpWhatsApp", { requestId: requestId("followup"), id: rowId(followupRow) }, "Pesan tindak lanjut siap dibuka.", "Tindak lanjut gagal antar", false)}><MessageCircle /> {waDone ? "Buka Ulang WA Tindak Lanjut" : "1. Siapkan WA Tindak Lanjut"}</button>{attemptNo < 2 && <div className="followup-schedule"><Field label="Tanggal pengantaran ulang" hint="Jika hari ini, paket langsung masuk antrean Kurir. Jika tanggal lain, rencana disimpan dahulu."><input type="date" min={todayKey()} value={followupDate} onChange={(e) => setFollowupDate(e.target.value)} /></Field><button className="primary-button" disabled={busy || !waDone || !followupDate} onClick={() => scheduleRedelivery(followupRow)}><CalendarDays /> 2. Simpan Pengantaran Ulang</button></div>}</div><Field label="Catatan keputusan (opsional)"><textarea value={followupNote} onChange={(e) => setFollowupNote(e.target.value)} placeholder="Contoh: pasien memilih ambil di loket" /></Field><div className="modal-actions inline-actions"><button className="secondary-button" disabled={busy || !waDone} onClick={() => followupAction("markSelfPickup", { requestId: requestId("pickup"), id: rowId(followupRow), note: followupNote || "Pasien memilih mengambil obat secara mandiri di Farmasi." }, "Pasien diarahkan untuk ambil mandiri.")}><Home /> Tetapkan Ambil Mandiri</button>{attemptNo < 2 && <button className="danger-button" disabled={busy || !waDone || !followupNote.trim()} onClick={() => followupAction("closeFailedCase", { requestId: requestId("close"), id: rowId(followupRow), note: followupNote }, "Kasus gagal antar ditutup.")}><X /> Tutup Layanan</button>}</div></>}
+      {["FOLLOW_UP", "REDELIVERY_PLANNED"].includes(state) && <><div className="followup-steps"><button className="secondary-button" disabled={busy} onClick={() => followupAction("failedFollowUpWhatsApp", { requestId: requestId("followup"), id: rowId(followupRow) }, "Pesan tindak lanjut siap dibuka.", "Tindak lanjut gagal antar", false)}><MessageCircle /> Buka/Siapkan WA Tindak Lanjut</button>{attemptNo < 2 && <div className="followup-schedule"><Field label="Tanggal pengantaran ulang" hint="Jika hari ini, paket langsung masuk antrean Kurir. Jika tanggal lain, rencana disimpan dahulu."><input type="date" min={todayKey()} value={followupDate} onChange={(e) => setFollowupDate(e.target.value)} /></Field><button className="primary-button" disabled={busy || !followupDate} onClick={() => scheduleRedelivery(followupRow)}><CalendarDays /> Simpan Pengantaran Ulang</button></div>}</div><Field label="Catatan keputusan (opsional)"><textarea value={followupNote} onChange={(e) => setFollowupNote(e.target.value)} placeholder="Contoh: pasien memilih ambil di loket" /></Field><div className="modal-actions inline-actions"><button className="secondary-button" disabled={busy} onClick={() => followupAction("markSelfPickup", { requestId: requestId("pickup"), id: rowId(followupRow), note: followupNote || "Pasien memilih mengambil obat secara mandiri di Farmasi." }, "Pasien diarahkan untuk ambil mandiri.")}><Home /> Tetapkan Ambil Mandiri</button>{attemptNo < 2 && <button className="danger-button" disabled={busy || !followupNote.trim()} onClick={() => followupAction("closeFailedCase", { requestId: requestId("close"), id: rowId(followupRow), note: followupNote }, "Kasus gagal antar ditutup.")}><X /> Tutup Layanan</button>}</div></>}
       {state === "SELF_PICKUP_WAITING" && <><div className="confirm-note"><Home /><p>Kasus menunggu pengambilan mandiri di Loket Farmasi. Tutup hanya setelah obat benar-benar diserahkan.</p></div><Field label="Catatan penyerahan"><textarea value={followupNote} onChange={(e) => setFollowupNote(e.target.value)} placeholder="Nama penerima/waktu penyerahan singkat" /></Field><button className="primary-button" disabled={busy} onClick={() => followupAction("confirmSelfPickup", { requestId: requestId("pickup_done"), id: rowId(followupRow), note: followupNote || "Obat telah diambil mandiri di Loket Farmasi." }, "Pengambilan mandiri dikonfirmasi; kasus selesai.")}><Check /> Konfirmasi Obat Sudah Diambil</button></>}
       </div>
     </Modal>;
@@ -621,7 +634,7 @@ function FarmasiView({ active, data, areas, incidents, operationalOptions, onRef
 
   if (active === "followup") return <div className="content-stack"><SectionTitle title="Tindak Lanjut Gagal Antar" text="Maksimal dua kali pengantaran ke rumah. Rencana tetap di sini sampai Farmasi mengaktifkan pengantaran ulang pada tanggal jadwal." />{failed.length ? <div className="today-list">{failed.map((row) => <TodayDeliveryRow key={rowId(row)} row={row} actions={<button className="secondary-button small" disabled={busy} onClick={() => openFollowup(row)}><History /> Kelola Tindak Lanjut</button>} />)}</div> : <Empty icon={<ShieldCheck />} title="Tidak ada tindak lanjut" text="Kasus gagal antar yang masih perlu keputusan Farmasi akan muncul di sini." />}{followupModal}{waDialog && <WhatsAppResultModal dialog={waDialog} onClose={() => setWaDialog(null)} />}</div>;
 
-  if (active === "verify") return <div className="content-stack"><SectionTitle title="Verifikasi Penerimaan" text="Kirim konfirmasi WhatsApp terlebih dahulu, lalu catat verifikasi setelah pasien/penerima menyatakan obat sudah diterima." />{manualRows.length ? <div className="today-list">{manualRows.map((row) => <TodayDeliveryRow key={rowId(row)} row={row} actions={<div className="action-row"><button className="secondary-button small" disabled={busy} onClick={() => act("getManualReceiptConfirmationWaAction", { id: rowId(row) }, "Pesan konfirmasi disiapkan.", "Konfirmasi penerimaan")}><MessageCircle /> Siapkan WA</button><button className="primary-button small" disabled={busy} onClick={() => { setManualMethod(optionsOf(operationalOptions, "MANUAL_VERIFICATION_METHODS")[0] || "WHATSAPP"); setManualNote("Pasien menyatakan obat sudah diterima"); setManualRow(row); }}><ClipboardCheck /> Sudah Dikonfirmasi</button></div>} />)}</div> : <Empty icon={<ClipboardCheck />} title="Antrean verifikasi kosong" text="Pengantaran tanpa kode akan muncul di sini." />}{manualModal}{waDialog && <WhatsAppResultModal dialog={waDialog} onClose={() => setWaDialog(null)} />}</div>;
+  if (active === "verify") return <div className="content-stack"><SectionTitle title="Verifikasi Penerimaan" text="WA konfirmasi dapat dibuka bila diperlukan. Catat verifikasi setelah pasien/penerima menyatakan obat sudah diterima." />{manualRows.length ? <div className="today-list">{manualRows.map((row) => <TodayDeliveryRow key={rowId(row)} row={row} actions={<div className="action-row"><button className="secondary-button small" disabled={busy} onClick={() => act("getManualReceiptConfirmationWaAction", { id: rowId(row) }, "Pesan konfirmasi disiapkan.", "Konfirmasi penerimaan")}><MessageCircle /> Siapkan WA</button><button className="primary-button small" disabled={busy} onClick={() => { setManualMethod(optionsOf(operationalOptions, "MANUAL_VERIFICATION_METHODS")[0] || "WHATSAPP"); setManualNote("Pasien menyatakan obat sudah diterima"); setManualRow(row); }}><ClipboardCheck /> Sudah Dikonfirmasi</button></div>} />)}</div> : <Empty icon={<ClipboardCheck />} title="Antrean verifikasi kosong" text="Pengantaran tanpa kode akan muncul di sini." />}{manualModal}{waDialog && <WhatsAppResultModal dialog={waDialog} onClose={() => setWaDialog(null)} />}</div>;
 
   if (active === "incidents") return <div className="content-stack"><SectionTitle title="Kendala Kurir Aktif" text="Pantau area dan paket terdampak sebelum menindaklanjuti pasien." />{incidents.length ? <div className="incident-list">{incidents.map((row) => <article className="incident-card" key={rowId(row)}><span><TriangleAlert /></span><div><small>{get(row, "courier", "courierName")}</small><h3>{get(row, "type")}</h3><p>{get(row, "detail")}</p><div><Badge status={String(get(row, "verificationStatus"))} /><em>{get(row, "affectedCount")} paket • {get(row, "delayEstimate")}</em></div></div></article>)}</div> : <Empty icon={<ShieldCheck />} title="Tidak ada kendala aktif" text="Seluruh Kurir dapat melanjutkan pengantaran." />}{waDialog && <WhatsAppResultModal dialog={waDialog} onClose={() => setWaDialog(null)} />}</div>;
 
@@ -662,8 +675,10 @@ function KurirView({ active, data, user, incident, operationalOptions, onRefresh
         const message = String(result.backendMessage || "Kode penerimaan tidak valid.");
         setCompleteError(message); show("error", message); return result;
       }
-      setWaDialog(whatsAppDialogFromResult(waTitle, result));
-      onMutation(result); show("success", success); return result;
+      onMutation(result); show("success", success);
+      const waEvent = name === "setDeliveryPending" ? "PENDING" : name === "failDelivery" ? "FAILED" : "";
+      if (waEvent) void callFunction<Row>("prepareWhatsApp", { eventType: waEvent, id: String(payload.id || rowId((result.record || {}) as Row)), attemptNo: get(result.attempt || result.record || {}, "attemptNo", "attemptCount") || 1, reason: waEvent === "PENDING" ? String(payload.reason || "") : "", snapshot: (result.record || {}) as Row }).then(wa => { const d = whatsAppDialogFromResult(waTitle, wa); if (d) setWaDialog(d); }).catch(() => undefined);
+      return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Aksi gagal.";
       setCompleteError(message); show("error", message); return null;
@@ -678,6 +693,12 @@ function KurirView({ active, data, user, incident, operationalOptions, onRefresh
   function openFailure(row: Row) {
     setFailureReason(optionsOf(operationalOptions, "FAILURE_REASONS")[0] || "");
     setFailureDetail(""); setFailureRow(row);
+  }
+  function openWaEvent(eventType: "PENDING" | "FAILED", row: Row, title: string) {
+    const attemptNo = Number(get(row.attempt || row, "attemptNo", "attemptCount") || 1);
+    void callFunction<Row>("prepareWhatsApp", { eventType, id: rowId(row), attemptNo, snapshot: row }).then(wa => {
+      const d = whatsAppDialogFromResult(title, wa); if (d) setWaDialog(d);
+    }).catch(() => show("error", "WA belum dapat disiapkan. Pengantaran tetap dapat dilanjutkan."));
   }
   function openComplete(row: Row) {
     setCompleteError("");
@@ -705,8 +726,8 @@ function KurirView({ active, data, user, incident, operationalOptions, onRefresh
   function taskActions(row: Row) {
     const state = operationalStateOf(row) || "ACTIVE";
     const failButton = <button className="danger-button small" disabled={busy} onClick={() => openFailure(row)}><TriangleAlert /> Gagal</button>;
-    if (state === "PENDING") return <div className="action-row"><button className="primary-button small" disabled={busy} onClick={() => act("resumeDelivery", { requestId: requestId("resume"), id: rowId(row) }, "Pengantaran dilanjutkan.")}><Bike /> Lanjut Antar</button>{failButton}</div>;
-    if (state === "RETURN_WAITING") return <div className="task-state-note"><TriangleAlert /><span>Gagal antar sudah dilaporkan. Kembalikan obat fisik ke Farmasi.</span></div>;
+    if (state === "PENDING") return <div className="action-row"><button className="secondary-button small" disabled={busy} onClick={() => openWaEvent("PENDING", row, "Pending pengantaran")}><MessageCircle /> Buka/Kirim Ulang WA</button><button className="primary-button small" disabled={busy} onClick={() => act("resumeDelivery", { requestId: requestId("resume"), id: rowId(row) }, "Pengantaran dilanjutkan.")}><Bike /> Lanjut Antar</button>{failButton}</div>;
+    if (state === "RETURN_WAITING") return <div className="task-state-note"><TriangleAlert /><span>Gagal antar sudah dilaporkan. Kembalikan obat fisik ke Farmasi.</span><button className="secondary-button small" disabled={busy} onClick={() => openWaEvent("FAILED", row, "Gagal antar")}><MessageCircle /> Buka/Kirim Ulang WA</button></div>;
     return <div className="action-row"><button className="secondary-button small" disabled={busy} onClick={() => openPending(row)}><Clock3 /> Pending</button>{failButton}<button className="primary-button small" disabled={busy} onClick={() => openComplete(row)}><Check /> Selesaikan</button></div>;
   }
 
@@ -717,7 +738,7 @@ function KurirView({ active, data, user, incident, operationalOptions, onRefresh
     busy={busy}
     onClose={() => setClaimRow(null)}
     onConfirm={async () => {
-      const result = await act("claimTask", { requestId: requestId("claim"), id: rowId(claimRow) }, "Tugas berhasil diambil. Detail tujuan kini terbuka di Tugas Saya.", "Pemberitahuan mulai diantar");
+      const result = await act("claimTask", { requestId: requestId("claim"), id: rowId(claimRow) }, "Tugas berhasil diambil. Detail tujuan kini terbuka di Tugas Saya.");
       if (result) setClaimRow(null);
     }}
   ><div className="confirm-note"><Bike /><p>Pastikan kode paket pada aplikasi sama dengan label fisik. Nama, RM, kontak, alamat, dan Maps baru dibuka setelah klaim berhasil.</p></div></ConfirmDialog> : null;
@@ -731,7 +752,7 @@ function KurirView({ active, data, user, incident, operationalOptions, onRefresh
       <div className="confirm-note warning"><Clock3 /><p>Gunakan bila pengantaran masih mungkin dilanjutkan hari ini. Status dapat dibuka kembali dengan tombol Lanjut Antar.</p></div>
       <Field label="Alasan pending"><select required value={pendingReason} onChange={(event) => setPendingReason(event.target.value)}>{optionsOf(operationalOptions, "PENDING_REASONS").map(value => <option key={value}>{value}</option>)}</select></Field>
       <Field label="Catatan tambahan (opsional)"><textarea value={pendingDetail} onChange={(event) => setPendingDetail(event.target.value)} placeholder="Keterangan singkat bila diperlukan" /></Field>
-      <footer className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={() => setPendingRow(null)}>Batal</button><button className="warning-button" disabled={busy || !pendingReason}><Clock3 /> Simpan Pending & Siapkan WA</button></footer>
+      <footer className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={() => setPendingRow(null)}>Batal</button><button className="warning-button" disabled={busy || !pendingReason}><Clock3 /> Simpan Pending</button></footer>
     </form>
   </Modal> : null;
 
@@ -744,7 +765,7 @@ function KurirView({ active, data, user, incident, operationalOptions, onRefresh
       <div className="confirm-note warning"><TriangleAlert /><p>Gunakan bila pengantaran hari ini tidak dapat dilanjutkan. Setelah disimpan, paket wajib dikembalikan dan dikonfirmasi Farmasi.</p></div>
       <Field label="Alasan gagal"><select required value={failureReason} onChange={(event) => setFailureReason(event.target.value)}>{optionsOf(operationalOptions, "FAILURE_REASONS").map(value => <option key={value}>{value}</option>)}</select></Field>
       <Field label="Catatan tambahan (opsional)"><textarea value={failureDetail} onChange={(event) => setFailureDetail(event.target.value)} placeholder="Keterangan singkat bila diperlukan" /></Field>
-      <footer className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={() => setFailureRow(null)}>Batal</button><button className="danger-button" disabled={busy || !failureReason}><TriangleAlert /> Simpan Gagal Antar & Siapkan WA</button></footer>
+      <footer className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={() => setFailureRow(null)}>Batal</button><button className="danger-button" disabled={busy || !failureReason}><TriangleAlert /> Simpan Gagal Antar</button></footer>
     </form>
   </Modal> : null;
 
@@ -781,7 +802,7 @@ function KurirView({ active, data, user, incident, operationalOptions, onRefresh
   const actionModals = <>{claimModal}{pendingModal}{failureModal}{completionModal}{resolveModal}{waDialog && <WhatsAppResultModal dialog={waDialog} onClose={() => setWaDialog(null)} />}</>;
   if (active === "my-tasks") return <div className="content-stack"><SectionTitle title="Pengantaran Saya" text="Buka Maps untuk tujuan spesifik pasien. Selesaikan setiap paket secara individual." />{mine.length ? <div className="cards-grid">{mine.map((row) => <DeliveryCard key={rowId(row)} row={row} actions={taskActions(row)} />)}</div> : <Empty icon={<Bike />} title="Belum ada tugas aktif" text="Ambil paket siap diantar dari daftar tugas." />}{actionModals}</div>;
   if (active === "history") return <div className="content-stack"><SectionTitle title="Riwayat Hari Ini" text="Paket yang selesai atau gagal pada hari operasional ini." />{historyRows.length ? <div className="cards-grid">{historyRows.map((row) => <DeliveryCard key={rowId(row)} row={row} />)}</div> : <Empty icon={<History />} title="Riwayat hari ini masih kosong" text="Tugas yang selesai atau gagal akan tercatat otomatis di sini." />}{actionModals}</div>;
-  if (active === "incidents") return <div className="content-stack"><SectionTitle title="Kendala Perjalanan" text="Satu Kurir hanya boleh memiliki satu kendala aktif." />{incident ? <article className="incident-focus"><span className="incident-visual"><TriangleAlert /></span><div><small>KENDALA AKTIF</small><h2>{get(incident, "type")}</h2><p>{get(incident, "detail")}</p><Badge status={String(get(incident, "verificationStatus"))} /><button className="primary-button" disabled={busy} onClick={() => { setResolutionNote(""); setResolveDialog(true); }}><Check /> Selesaikan Kendala</button></div></article> : <form className="form-card compact incident-report-form" onSubmit={(event) => { event.preventDefault(); const formElement = event.currentTarget; const fd = new FormData(formElement); void act("reportCourierIncident", { requestId: requestId("incident"), payload: { type: fd.get("type"), detail: fd.get("detail"), delayEstimate: fd.get("delay") } }, "Kendala dilaporkan ke Farmasi.", "Pemberitahuan kendala ke pasien").then(result => { if (result) formElement.reset(); }); }}><SectionTitle title="Laporkan kendala" text="Siapkan pesan WhatsApp untuk setiap pasien pada paket aktif yang terdampak." /><div className="form-grid"><Field label="Jenis kendala"><select name="type" required><option value="">Pilih kendala</option>{optionsOf(operationalOptions, "COURIER_INCIDENT_TYPES").map(value => <option key={value}>{value}</option>)}</select></Field><Field label="Estimasi keterlambatan"><select name="delay" required>{optionsOf(operationalOptions, "DELAY_ESTIMATES").map(value => <option key={value}>{value}</option>)}</select></Field><Field label="Detail"><textarea name="detail" required placeholder="Jelaskan singkat tanpa data pasien" /></Field></div><button className="danger-button incident-submit" disabled={busy}><TriangleAlert /> Laporkan Kendala</button></form>}{actionModals}</div>;
+  if (active === "incidents") return <div className="content-stack"><SectionTitle title="Kendala Perjalanan" text="Satu Kurir hanya boleh memiliki satu kendala aktif." />{incident ? <article className="incident-focus"><span className="incident-visual"><TriangleAlert /></span><div><small>KENDALA AKTIF</small><h2>{get(incident, "type")}</h2><p>{get(incident, "detail")}</p><Badge status={String(get(incident, "verificationStatus"))} /><button className="primary-button" disabled={busy} onClick={() => { setResolutionNote(""); setResolveDialog(true); }}><Check /> Selesaikan Kendala</button></div></article> : <form className="form-card compact incident-report-form" onSubmit={(event) => { event.preventDefault(); const formElement = event.currentTarget; const fd = new FormData(formElement); void act("reportCourierIncident", { requestId: requestId("incident"), payload: { type: fd.get("type"), detail: fd.get("detail"), delayEstimate: fd.get("delay") } }, "Kendala dilaporkan ke Farmasi.").then(result => { if (result) formElement.reset(); }); }}><SectionTitle title="Laporkan kendala" text="Catat kendala operasional Kurir. Estimasi hanya informasi dan tidak mengunci penyelesaian kendala." /><div className="form-grid"><Field label="Jenis kendala"><select name="type" required><option value="">Pilih kendala</option>{optionsOf(operationalOptions, "COURIER_INCIDENT_TYPES").map(value => <option key={value}>{value}</option>)}</select></Field><Field label="Estimasi keterlambatan"><select name="delay" required>{optionsOf(operationalOptions, "DELAY_ESTIMATES").map(value => <option key={value}>{value}</option>)}</select></Field><Field label="Detail"><textarea name="detail" required placeholder="Jelaskan singkat tanpa data pasien" /></Field></div><button className="danger-button incident-submit" disabled={busy}><TriangleAlert /> Laporkan Kendala</button></form>}{actionModals}</div>;
   if (active === "ready") return <div className="content-stack"><section className="courier-hero"><div><span className="eyebrow">SIAP DIAMBIL</span><h2>{ready.length} paket menunggu Kurir</h2><p>Pilih berdasarkan wilayah. Identitas dan alamat pasien tetap terkunci sampai tugas berhasil diambil.</p></div><div className="route-icon"><Bike /></div></section>{ready.length ? grouped.map(([routeName, rows]) => <section className="route-group" key={routeName}><header><div><MapPin /><span><strong>{routeName}</strong><small>{rows?.length || 0} paket dalam kelompok rute ini</small></span></div><Badge status="KLAIM PER PAKET" /></header><div className="cards-grid">{rows?.map((row) => <SafeQueueCard key={rowId(row)} row={row} actions={<button className="primary-button small" disabled={busy || !!incident} onClick={() => setClaimRow(row)}><Bike /> Ambil Tugas</button>} />)}</div></section>) : <Empty icon={<PackageCheck />} title="Semua paket sudah tertangani" text="Daftar diperbarui otomatis ketika Farmasi menyiapkan obat." />}{incident && <div className="policy-note warning"><TriangleAlert /><div><strong>Pengambilan tugas dikunci sementara</strong><p>Selesaikan kendala aktif sebelum mengambil paket baru.</p></div></div>}{actionModals}</div>;
   return <div className="content-stack"><section className="courier-hero"><div><span className="eyebrow">RUANG KERJA KURIR</span><h2>Rute jelas, tindakan cepat.</h2><p>Ambil paket per wilayah, buka tujuan setelah klaim, lalu selesaikan setiap pengantaran dari HP.</p></div><div className="route-icon"><Bike /></div></section><div className="stats-grid courier-stats"><ActionStatCard icon={<PackageOpen />} label="Siap diambil" value={ready.length} note="Identitas masih terkunci" onClick={() => navigate("ready")} /><ActionStatCard icon={<Bike />} label="Tugas aktif" value={mine.length} note="Lanjutkan pengantaran" tone="purple" onClick={() => navigate("my-tasks")} /><ActionStatCard icon={<PackageCheck />} label="Ditangani hari ini" value={historyRows.length} note={`${historyRows.filter(row => baseStatusOf(row) === STATUS.DELIVERED).length} berhasil • ${historyRows.filter(row => baseStatusOf(row) === STATUS.FAILED).length} gagal`} tone="green" onClick={() => navigate("history")} /><ActionStatCard icon={<TriangleAlert />} label="Kendala aktif" value={incident ? 1 : 0} note={incident ? "Perlu diselesaikan" : "Perjalanan aman"} tone="orange" onClick={() => navigate("incidents")} /></div><div className="courier-next"><span><Route /></span><div><strong>{mine.length ? `${mine.length} tugas perlu diselesaikan` : ready.length ? `${ready.length} paket siap dipilih` : "Belum ada tugas baru"}</strong><p>{mine.length ? "Buka Tugas Saya untuk Maps, WhatsApp, telepon, dan penyelesaian paket." : ready.length ? "Buka Siap Diambil dan pilih paket sesuai rute perjalanan." : "Antrean baru akan muncul otomatis."}</p></div><button className="primary-button" onClick={() => navigate(mine.length ? "my-tasks" : "ready")}><ArrowRight /> Buka</button></div></div>;
 }
@@ -1142,10 +1163,12 @@ function AdminView({ active, data, areas, areaCount, transactionCount, activeAcc
     <article className="table-card"><SectionTitle title="Retensi per Tahun" text="Status cleanup disimpan sebagai manifest; batch worker hanya bekerja setelah approval." /><table><thead><tr><th>Tahun</th><th>Status</th><th>Archive</th><th>Eligible</th><th>Aksi</th></tr></thead><tbody>{(((retention || {}).years || []) as Row[]).length ? (((retention || {}).years || []) as Row[]).map(row => <tr key={String(row.year)}><td><strong>{row.year}</strong></td><td><Badge status={String(row.status)} /></td><td>{row.archiveStatus || "—"}<small>{row.lastSyncAt ? dateText(row.lastSyncAt) : ""}</small></td><td>{row.eligibleAt || "—"}</td><td>{["ELIGIBLE","BLOCKED","PREPARED","APPROVED","RUNNING"].includes(String(row.status)) ? <button className="secondary-button small" onClick={() => openCleanup(row)}><ShieldCheck /> Tinjau</button> : <span>—</span>}</td></tr>) : <tr><td colSpan={5}>Belum ada tahun operasional yang memerlukan retensi.</td></tr>}</tbody></table></article>
     <div className="advanced-entry"><div><LockKeyhole /><span><strong>Mode Teknisi Lanjutan</strong><small>Restore, repair struktur, pemulihan transaksi hilang, restore field, dan diagnostic bundle.</small></span></div><button className="secondary-button" onClick={() => { setTechSession(null); setTechPin(""); setTechPreview(null); setTechDialog(true); }}><KeyRound /> Buka dengan PIN</button></div>
     {backupModal}{cleanupModal}{techModal}</div>;
-  const healthStatus = String(get(health, "status") || "PERLU PERHATIAN");
-  const healthOk = healthStatus === "AMAN";
-  const healthHeld = healthStatus === "OPERASIONAL DITAHAN";
-  return <div className="content-stack"><section className={`health-banner ${healthOk ? "ok" : "bad"}`}><div><span>{healthOk ? <ShieldCheck /> : <TriangleAlert />}</span><div><small>KONDISI SISTEM</small><h2>{healthStatus}</h2><p>{String(get(health, "recommendation") || "Periksa status sistem sebelum melanjutkan.")}</p><small>Backup: {dateText(String(get(health, "lastBackupAt") || "")) || "belum ada"} • Checkpoint: {dateText(String(get(health, "lastCheckpointAt") || "")) || "belum ada"} • Arsip: {String(get(get(health, "archive") || {}, "status") || "—")}</small></div></div><Badge status={healthHeld ? "DITAHAN" : healthOk ? "AMAN" : "PERLU PERHATIAN"} /></section><div className="stats-grid"><StatCard icon={<Users />} label="Akun aktif" value={activeAccountCount || accounts.filter((a) => get(a, "active", "Aktif") !== false).length} /><StatCard icon={<MapPin />} label="Desa/Kelurahan" value={areaCount || areas.length} tone="green" /><StatCard icon={<PackageOpen />} label="Transaksi operasional" value={transactionCount || data.length} tone="orange" /><StatCard icon={<Archive />} label="Kebijakan archive" value="KEEP" note="Selama aplikasi digunakan" tone="purple" /></div><SectionTitle title="Pusat kendali Admin" text="Operasi normal dapat dikelola langsung dari aplikasi." /><div className="admin-shortcuts">{navByRole.ADMIN.slice(1).map((n) => <button key={n.id} onClick={() => navigate(n.id)}><span>{n.icon}</span><div><strong>{n.label}</strong><small>Buka pengaturan</small></div><ChevronRight /></button>)}</div></div>;
+  const healthStatus = String(get(health, "status") || "PERLU PERHATIAN").toUpperCase();
+  const healthHeld = Boolean(get(health, "operationalHold")) || healthStatus === "OPERASIONAL DITAHAN";
+  const healthOk = !healthHeld && ["AMAN", "NORMAL", "OK"].includes(healthStatus);
+  const publicHealthStatus = healthHeld ? "Layanan Dihentikan Sementara" : healthOk ? "Layanan Berjalan Normal" : "Ada Pengaturan yang Perlu Ditinjau";
+  const publicHealthText = healthHeld ? "Transaksi baru sedang ditahan sementara. Buka pengaturan Admin untuk meninjau kondisi layanan." : healthOk ? "MELESAT siap digunakan untuk operasional Farmasi dan Kurir." : "Buka pengaturan Admin untuk melihat bagian yang memerlukan peninjauan.";
+  return <div className="content-stack"><section className={`health-banner ${healthOk ? "ok" : "bad"}`}><div><span>{healthOk ? <ShieldCheck /> : <TriangleAlert />}</span><div><small>KONDISI LAYANAN</small><h2>{publicHealthStatus}</h2><p>{publicHealthText}</p></div></div><Badge status={publicHealthStatus} /></section><div className="stats-grid"><StatCard icon={<Users />} label="Akun aktif" value={activeAccountCount || accounts.filter((a) => get(a, "active", "Aktif") !== false).length} /><StatCard icon={<MapPin />} label="Desa/Kelurahan" value={areaCount || areas.length} tone="green" /><StatCard icon={<PackageOpen />} label="Transaksi operasional" value={transactionCount || data.length} tone="orange" /><StatCard icon={<Archive />} label="Kebijakan archive" value="KEEP" note="Selama aplikasi digunakan" tone="purple" /></div><SectionTitle title="Pusat kendali Admin" text="Operasi normal dapat dikelola langsung dari aplikasi." /><div className="admin-shortcuts">{navByRole.ADMIN.slice(1).map((n) => <button key={n.id} onClick={() => navigate(n.id)}><span>{n.icon}</span><div><strong>{n.label}</strong><small>Buka pengaturan</small></div><ChevronRight /></button>)}</div></div>;
 }
 
 function ManagementView({ active, dashboard, range, setRange, reload }: { active: string; dashboard: Row; range: { startDate: string; endDate: string; reportBasis: string }; setRange: (r: any) => void; reload: () => void }) {
@@ -1245,9 +1268,32 @@ function ManagementView({ active, dashboard, range, setRange, reload }: { active
   return <div className="content-stack management-dashboard"><section className="executive-hero"><div className="executive-copy"><span className="executive-kicker"><Building2 /> RINGKASAN EKSEKUTIF</span><h2>Kinerja layanan pengantaran obat</h2><p>Ikhtisar operasional MELESAT untuk pengambilan keputusan Manajemen RSUD Provinsi NTB.</p><div className="executive-period"><CalendarDays /><span><small>PERIODE LAPORAN</small><strong>{periodLabel}</strong></span></div></div><div className="executive-art"><span>MELESAT</span><img src="./assets/maskot-melesat.png" alt="Maskot MELESAT" /></div></section>
     <div className="management-filter"><Field label="Mulai"><input type="date" value={range.startDate} onChange={(e) => setRange({ ...range, startDate: e.target.value })} /></Field><Field label="Sampai"><input type="date" value={range.endDate} onChange={(e) => setRange({ ...range, endDate: e.target.value })} /></Field><Field label="Basis laporan"><select value={range.reportBasis} onChange={(e) => setRange({ ...range, reportBasis: e.target.value })}><option value="DAFTAR">Tanggal Daftar</option><option value="SELESAI">Tanggal Selesai</option></select></Field><button className="primary-button" onClick={reload}><Search /> Terapkan</button></div>
     <div className="executive-kpis"><ExecutiveKpi icon={<PackageOpen />} label="Total layanan" value={total} note={`${Number(kpi.transit || 0)} dalam perjalanan`} tone="blue" /><ExecutiveKpi icon={<PackageCheck />} label="Terkirim" value={delivered} note={`${successRate}% dari total layanan`} tone="green" /><ExecutiveKpi icon={<ShieldCheck />} label="Terverifikasi" value={verified} note={`${verificationRate}% dari yang terkirim`} tone="teal" /><ExecutiveKpi icon={<WalletCards />} label="Layanan subsidi" value={Number(finance.subsidizedServices || 0)} note={`${money(finance.subsidyAmount)} ditanggung RSUD`} tone="purple" /><ExecutiveKpi icon={<TriangleAlert />} label="Gagal antar" value={Number(kpi.failed || 0)} note="Memerlukan evaluasi layanan" tone="gold" /></div>
-    <div className="dashboard-grid"><article className="chart-card"><SectionTitle title="Tren Pengantaran" text={`Basis ${dashboard.meta?.basisLabel || "Tanggal Daftar"}`} />{daily.length ? <ResponsiveContainer width="100%" height={260}><AreaChart data={daily}><defs><linearGradient id="melesatArea" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#0b6fca" stopOpacity={0.35}/><stop offset="95%" stopColor="#0b6fca" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" stroke="#dfeaec"/><XAxis dataKey="date" tick={{fontSize: 11}}/><YAxis allowDecimals={false} tick={{fontSize: 11}}/><Tooltip/><Area type="monotone" dataKey="total" stroke="#0b6fca" strokeWidth={3} fill="url(#melesatArea)" /></AreaChart></ResponsiveContainer> : <Empty title="Belum ada data periode ini" text="Ubah rentang tanggal untuk melihat tren." />}</article><article className="composition-card"><SectionTitle title="Komposisi Status" text="Posisi transaksi pada periode terpilih." />{Object.entries(composition).map(([key, value]) => { const total = Math.max(Number(kpi.total || 1), 1); return <div className="bar-row" key={key}><span>{key}</span><div><i style={{width: `${Number(value) / total * 100}%`}} /></div><strong>{Number(value)}</strong></div>; })}</article></div>
+    <div className="dashboard-grid"><article className="chart-card"><SectionTitle title="Tren Pengantaran" text={`Basis ${dashboard.meta?.basisLabel || "Tanggal Daftar"}`} />{daily.length ? <SimpleTrendChart data={daily} /> : <Empty title="Belum ada data periode ini" text="Ubah rentang tanggal untuk melihat tren." />}</article><article className="composition-card"><SectionTitle title="Komposisi Status" text="Posisi transaksi pada periode terpilih." />{Object.entries(composition).map(([key, value]) => { const total = Math.max(Number(kpi.total || 1), 1); return <div className="bar-row" key={key}><span>{key}</span><div><i style={{width: `${Number(value) / total * 100}%`}} /></div><strong>{Number(value)}</strong></div>; })}</article></div>
     <div className="dashboard-grid"><article className="table-card"><SectionTitle title="Kinerja Kurir" text="Ringkasan hasil, verifikasi, dan kendala." /><table><thead><tr><th>Kurir</th><th>Terkirim</th><th>Keberhasilan</th><th>Verifikasi</th></tr></thead><tbody>{couriers.slice(0, 8).map((c: Row) => <tr key={c.name}><td><strong>{c.name}</strong><small>{c.topRegion || "—"}</small></td><td>{c.delivered}</td><td>{c.successRate}%</td><td>{c.verificationRate}%</td></tr>)}</tbody></table></article><article className="ranking-card"><SectionTitle title="Desa/Kelurahan Terlayani" text="Volume pengantaran berdasarkan wilayah tujuan." />{villages.slice(0, 8).map((v: Row, index: number) => <div key={v.name}><span>{index + 1}</span><p><strong>{v.name}</strong><i style={{width: `${Math.max(10, Number(v.count) / Math.max(Number(villages[0]?.count || 1), 1) * 100)}%`}} /></p><em>{v.count}</em></div>)}</article></div>
     {dashboard.meta?.archiveOnly && <div className="policy-note"><Archive /><div><strong>Mode archive-only</strong><p>Periode ini dihitung dari archive KPI anonim; detail operasional lama telah dibersihkan.</p></div></div>}
+  </div>;
+}
+
+function SimpleTrendChart({ data }: { data: Row[] }) {
+  const values = data.map(row => Math.max(0, Number(row.total || 0)));
+  const max = Math.max(1, ...values);
+  const width = 1000, height = 250, left = 42, top = 16, bottom = 32, usableW = width - left - 16, usableH = height - top - bottom;
+  const points = values.map((value, index) => {
+    const x = left + (values.length <= 1 ? usableW / 2 : index / (values.length - 1) * usableW);
+    const y = top + usableH - value / max * usableH;
+    return [x, y] as const;
+  });
+  const line = points.map(([x,y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  const area = points.length ? `${left},${top + usableH} ${line} ${left + usableW},${top + usableH}` : "";
+  const first = String(data[0]?.date || ""); const last = String(data[data.length - 1]?.date || "");
+  return <div className="simple-trend-chart" role="img" aria-label={`Tren pengantaran, maksimum ${max} layanan per hari`}>
+    <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+      {[0,.25,.5,.75,1].map(r => <line key={r} x1={left} x2={left+usableW} y1={top+usableH*r} y2={top+usableH*r} className="trend-grid" />)}
+      <polygon points={area} className="trend-area" /><polyline points={line} className="trend-line" />
+      {points.map(([x,y],i) => <circle key={i} cx={x} cy={y} r="4" className="trend-dot"><title>{String(data[i]?.date || "")} • {values[i]}</title></circle>)}
+      <text x="4" y={top+6}>{max}</text><text x="4" y={top+usableH+4}>0</text>
+      <text x={left} y={height-6}>{first}</text><text x={left+usableW} y={height-6} textAnchor="end">{last}</text>
+    </svg>
   </div>;
 }
 
@@ -1284,6 +1330,7 @@ function AppShell({ user, onLogout }: { user: AppUser; onLogout: () => void }) {
   const setRealtime = useCallback((_status: RealtimeStatus) => undefined, []);
   const [deliveries, setDeliveries] = useState<Row[]>([]);
   const [areas, setAreas] = useState<Row[]>([]);
+  const [pharmacyAreasLoaded, setPharmacyAreasLoaded] = useState(false);
   const [areaCount, setAreaCount] = useState(0);
   const [transactionCount, setTransactionCount] = useState(0);
   const [activeAccountCount, setActiveAccountCount] = useState(0);
@@ -1298,6 +1345,14 @@ function AppShell({ user, onLogout }: { user: AppUser; onLogout: () => void }) {
   const [operationalSettings, setOperationalSettings] = useState<Row>({});
   const [range, setRange] = useState({ startDate: monthStart(), endDate: todayKey(), reportBasis: "DAFTAR" });
   const { toast, show } = useToast();
+  // Farmasi/Kurir workspace tidak di-refresh hanya karena pindah tab lokal. Admin tetap lazy per menu.
+  const activeForRefresh = user.role === "ADMIN" ? active : "";
+  const ensurePharmacyAreas = useCallback(async () => {
+    if (user.role !== "FARMASI" || pharmacyAreasLoaded) return;
+    const result = await callFunction<{ areas: Row[] }>("pharmacyRegistrationData");
+    setAreas(result.areas || []);
+    setPharmacyAreasLoaded(true);
+  }, [pharmacyAreasLoaded, user.role]);
 
   const refresh = useCallback(async (quiet = false) => {
     if (quiet) setBackgroundSyncing(true); else setBusy(true);
@@ -1306,27 +1361,27 @@ function AppShell({ user, onLogout }: { user: AppUser; onLogout: () => void }) {
         const result = await callFunction<Row>("managementData", { ...range, scope: "ALL" });
         setDashboard(result.dashboard || {});
       } else if (user.role === "FARMASI") {
-        const workspace = await callFunction<{ rows: Row[]; areas: Row[]; incidents: Row[]; operationalOptions: OperationalOptions }>("pharmacyWorkspaceData");
-        setDeliveries(workspace.rows || []); setAreas(workspace.areas || []); setIncidents(workspace.incidents || []); setOperationalOptions(workspace.operationalOptions || {});
+        const workspace = await callFunction<{ rows: Row[]; incidents: Row[]; operationalOptions: OperationalOptions }>("pharmacyWorkspaceData");
+        setDeliveries(workspace.rows || []); setIncidents(workspace.incidents || []); setOperationalOptions(workspace.operationalOptions || {});
       } else if (user.role === "KURIR") {
         const workspace = await callFunction<{ ready: Row[]; mine: Row[]; history: Row[]; incident: Row | null; operationalOptions: OperationalOptions }>("courierWorkspaceData");
         setDeliveries([...(workspace.ready || []), ...(workspace.mine || []), ...(workspace.history || [])]);
         setIncident(workspace.incident || null); setOperationalOptions(workspace.operationalOptions || {});
       } else if (user.role === "ADMIN") {
-        if (active === "home") {
+        if (activeForRefresh === "home") {
           const summary = await callFunction<Row>("adminDashboardSummary");
           setAreaCount(Number(summary.areaCount || 0)); setTransactionCount(Number(summary.transactionCount || 0)); setActiveAccountCount(Number(summary.activeAccounts || 0)); setAdminHealth(summary.health || {});
-        } else if (active === "accounts") {
+        } else if (activeForRefresh === "accounts") {
           const accountResult = await callFunction<Row>("adminAccounts"); const accountSummary = accountResult.accounts;
           const accountRows = Array.isArray(accountSummary) ? accountSummary : Array.isArray(accountSummary?.accounts) ? accountSummary.accounts : Array.isArray(accountResult.rows) ? accountResult.rows : [];
           setAccounts(accountRows); setActiveAccountCount(accountRows.filter((a: Row) => get(a, "active", "Aktif") !== false).length);
-        } else if (active === "areas") {
+        } else if (activeForRefresh === "areas") {
           const areaResult = await callFunction<{ areas: Row[]; count?: number }>("adminServiceAreas"); setAreas(areaResult.areas || []); setAreaCount(Number(areaResult.count || 0));
-        } else if (active === "transactions") {
+        } else if (activeForRefresh === "transactions") {
           const rowResult = await callFunction<{ rows: Row[] }>("adminRows"); setDeliveries(rowResult.rows || []); setTransactionCount(rowResult.rows?.length || 0);
-        } else if (active === "settings") {
+        } else if (activeForRefresh === "settings") {
           const settingsResult = await callFunction<Row>("adminOperationalSettings"); setOperationalSettings(settingsResult); setOperationalOptions(settingsResult.optionGroups || {});
-        } else if (active === "archive") {
+        } else if (activeForRefresh === "archive") {
           const [retentionResult, healthResult] = await Promise.all([callFunction<Row>("adminRetentionStatus"), callFunction<Row>("adminSystemHealth")]);
           setRetention(retentionResult.retention || retentionResult); setAdminHealth(healthResult.health || healthResult || {});
         }
@@ -1334,7 +1389,7 @@ function AppShell({ user, onLogout }: { user: AppUser; onLogout: () => void }) {
       setHealthy(true);
     } catch (e) { setHealthy(false); if (!quiet) show("error", e instanceof Error ? e.message : "Data gagal dimuat."); }
     finally { if (quiet) setBackgroundSyncing(false); else setBusy(false); }
-  }, [range, show, user.role, active]);
+  }, [range, show, user.role, activeForRefresh]);
 
   useEffect(() => { refresh(); }, [refresh]);
   useEffect(() => {
@@ -1362,9 +1417,9 @@ function AppShell({ user, onLogout }: { user: AppUser; onLogout: () => void }) {
       const deltas = ((event as CustomEvent<{ deltas?: Row[] }>).detail?.deltas || []) as Row[];
       deltas.forEach(delta => {
         const type = String(get(delta, "entityType")); const kind = String(get(delta, "kind")); const id = String(get(delta, "id")); const record = (get(delta, "record") || {}) as Row;
-        if (type === "DELIVERY" && id) setDeliveries(current => kind === "REMOVE" ? current.filter(row => rowId(row) !== id) : (() => { let found=false; const next=current.map(row => { if(rowId(row)!==id)return row; found=true; return {...row,...record}; }); return found?next:[record,...next]; })());
+        if (type === "DELIVERY" && id) setDeliveries(current => kind === "REMOVE" ? current.filter(row => rowId(row) !== id) : (() => { let found=false; const next=current.map(row => { if(rowId(row)!==id)return row; found=true; return mergeVersioned(row, record); }); return found?next:[record,...next]; })());
         if (type === "INCIDENT" && id) {
-          setIncidents(current => kind === "REMOVE" ? current.filter(row => String(get(row,"id","incidentId")) !== id) : (() => { let found=false; const next=current.map(row => { if(String(get(row,"id","incidentId"))!==id)return row; found=true; return {...row,...record}; }); return found?next:[record,...next]; })());
+          setIncidents(current => kind === "REMOVE" ? current.filter(row => String(get(row,"id","incidentId")) !== id) : (() => { let found=false; const next=current.map(row => { if(String(get(row,"id","incidentId"))!==id)return row; found=true; return mergeVersioned(row, record); }); return found?next:[record,...next]; })());
           if (user.role === "KURIR") setIncident(kind === "REMOVE" ? null : record);
         }
         if (type === "SERVICE_AREA" && id) setAreas(current => current.map(row => String(get(row, "areaId", "id")) === id ? {...row,...record} : row));
@@ -1390,7 +1445,7 @@ function AppShell({ user, onLogout }: { user: AppUser; onLogout: () => void }) {
         const next = current.map(row => {
           if (rowId(row) !== id) return row;
           found = true;
-          return { ...row, ...record };
+          return mergeVersioned(row, record);
         });
         return found ? next : [record, ...next];
       });
@@ -1422,7 +1477,7 @@ function AppShell({ user, onLogout }: { user: AppUser; onLogout: () => void }) {
   return <div className={`app-shell app-shell--${user.role.toLowerCase()}`}>
     <div className={mobileMenu ? "sidebar-drawer open" : "sidebar-drawer"}><div className="drawer-backdrop" onClick={() => setMobileMenu(false)} /><Sidebar user={user} active={active} setActive={navigate} onLogout={onLogout} badges={badges} /></div>
     <Sidebar user={user} active={active} setActive={navigate} onLogout={onLogout} badges={badges} />
-      <main className="workspace"><Topbar user={user} title={currentTitle} onMenu={() => setMobileMenu(true)} onRefresh={() => void refresh(false)} busy={busy || backgroundSyncing} />{dataUpdatePending && <div className="data-update-banner"><RefreshCw /><span>Data baru tersedia. Perubahan akan diterapkan setelah form atau popup ditutup.</span></div>}<div className="page-content"><ViewBoundary key={`${user.role}:${active}`}>{busy && !deliveries.length && !Object.keys(dashboard).length ? <Loading /> : user.role === "FARMASI" ? <FarmasiView active={active} data={deliveries} areas={areas} incidents={incidents} operationalOptions={operationalOptions} onRefresh={() => void refresh(true)} onMutation={applyMutationResult} navigate={navigate} show={show} /> : user.role === "KURIR" ? <KurirView active={active} data={deliveries} user={user} incident={incident} operationalOptions={operationalOptions} onRefresh={() => void refresh(true)} onMutation={applyMutationResult} navigate={navigate} show={show} /> : user.role === "ADMIN" ? <AdminView active={active} data={deliveries} areas={areas} areaCount={areaCount} transactionCount={transactionCount} activeAccountCount={activeAccountCount} accounts={accounts} retention={retention} health={adminHealth} currentUser={user} operationalSettings={operationalSettings} onRefresh={() => void refresh(true)} onLogout={onLogout} navigate={navigate} show={show} /> : <ManagementView active={active} dashboard={dashboard} range={range} setRange={setRange} reload={() => void refresh(false)} />}</ViewBoundary></div></main>
+      <main className="workspace"><Topbar user={user} title={currentTitle} onMenu={() => setMobileMenu(true)} onRefresh={() => void refresh(false)} busy={busy || backgroundSyncing} />{dataUpdatePending && <div className="data-update-banner"><RefreshCw /><span>Data baru tersedia. Perubahan akan diterapkan setelah form atau popup ditutup.</span></div>}<div className="page-content"><ViewBoundary key={`${user.role}:${active}`}>{busy && !deliveries.length && !Object.keys(dashboard).length ? <Loading /> : user.role === "FARMASI" ? <FarmasiView active={active} data={deliveries} areas={areas} incidents={incidents} operationalOptions={operationalOptions} ensureAreas={ensurePharmacyAreas} onRefresh={() => void refresh(true)} onMutation={applyMutationResult} navigate={navigate} show={show} /> : user.role === "KURIR" ? <KurirView active={active} data={deliveries} user={user} incident={incident} operationalOptions={operationalOptions} onRefresh={() => void refresh(true)} onMutation={applyMutationResult} navigate={navigate} show={show} /> : user.role === "ADMIN" ? <AdminView active={active} data={deliveries} areas={areas} areaCount={areaCount} transactionCount={transactionCount} activeAccountCount={activeAccountCount} accounts={accounts} retention={retention} health={adminHealth} currentUser={user} operationalSettings={operationalSettings} onRefresh={() => void refresh(true)} onLogout={onLogout} navigate={navigate} show={show} /> : <ManagementView active={active} dashboard={dashboard} range={range} setRange={setRange} reload={() => void refresh(false)} />}</ViewBoundary></div></main>
     <MobileNav role={user.role} active={active} setActive={navigate} badges={badges} /><ToastView toast={toast} />
   </div>;
 }

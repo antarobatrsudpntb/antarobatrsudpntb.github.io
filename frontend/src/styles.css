@@ -783,3 +783,13 @@ code { padding: 4px 7px; border-radius: 6px; background: #edf4f6; color: #315267
 .connection-diagnostics[open] summary{border-bottom:1px solid #e5edf3}
 .connection-diagnostics div{display:grid;gap:4px;padding:9px 12px;word-break:break-word}
 .connection-diagnostics span{display:block}
+
+
+/* FAST COMMIT V2: immediate acknowledgement + top-layer toast */
+.melesat-fast-v2-processing{position:fixed;left:50%;top:18px;transform:translate(-50%,-14px);z-index:2147483000;pointer-events:none;opacity:0;transition:opacity .12s ease,transform .12s ease}
+.melesat-fast-v2-processing[data-visible="true"]{opacity:1;transform:translate(-50%,0)}
+.melesat-fast-v2-processing__card{display:flex;align-items:center;gap:10px;max-width:min(92vw,520px);padding:11px 16px;border-radius:14px;background:#0b3558;color:#fff;box-shadow:0 12px 32px rgba(5,35,59,.24);font-weight:800;font-size:14px}
+.melesat-fast-v2-processing__card i{width:17px;height:17px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:fastv2spin .7s linear infinite}
+@keyframes fastv2spin{to{transform:rotate(360deg)}}
+.toast{z-index:2147483640!important}
+.simple-trend-chart{width:100%;height:260px;overflow:hidden}.simple-trend-chart svg{width:100%;height:100%}.trend-grid{stroke:#dfeaec;stroke-width:1;stroke-dasharray:6 6}.trend-area{fill:rgba(11,111,202,.16)}.trend-line{fill:none;stroke:#0b6fca;stroke-width:4;vector-effect:non-scaling-stroke}.trend-dot{fill:#fff;stroke:#0b6fca;stroke-width:3;vector-effect:non-scaling-stroke}.simple-trend-chart text{font-size:12px;fill:#607989}

@@ -35,7 +35,7 @@ export const config = {
   apiKey: raw.apiKey || "demo-key",
   region: raw.region || "asia-southeast2",
   emulator: raw.emulator === true || (raw.emulator === "auto" && localHost),
-  appVersion: raw.appVersion || "1.0.0",
+  appVersion: raw.appVersion || "1.1.0-UAT-FAST-COMMIT-V2",
 };
 
 const KEY = "melesat.session.v1";

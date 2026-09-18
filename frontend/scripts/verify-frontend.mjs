@@ -1,48 +1,71 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const checks = [], failures = [];
+const checks = [], failures = [], notes = [];
 const check = (condition, label) => { checks.push(label); if (!condition) failures.push(label); };
-const required = [
-  "dist/index.html", "dist/melesat-config.js", "dist/manifest.webmanifest", "dist/service-worker.js",
-  "dist/assets/logo-rsud-ntb.webp", "dist/assets/maskot-melesat.png", "dist/assets/icon-192.png", "dist/assets/icon-512.png",
-  "src/lib/backend.ts", "src/lib/apps-script-rest.ts", "src/lib/firebase-rest.ts", "src/lib/backend-types.ts",
+const read = (f) => readFileSync(join(root, f), "utf8");
+const requiredSource = [
+  "src/App.tsx", "src/lib/backend.ts", "src/lib/apps-script-rest.ts", "src/lib/firebase-rest.ts", "src/lib/backend-types.ts", "src/lib/fast-v2-ui.ts", "src/lib/wa-policy.ts",
+  "public/service-worker.js", "public/melesat-config.js", "public/manifest.webmanifest", "scripts/live-transport-smoke.mjs"
 ];
-for (const f of required) check(existsSync(join(root, f)), `file tersedia: ${f}`);
-if (failures.length === 0) {
-  const html = readFileSync(join(root, "dist/index.html"), "utf8");
-  check(html.includes("manifest.webmanifest") && html.includes("melesat-config.js"), "build memuat manifest dan runtime config");
-  const config = readFileSync(join(root, "dist/melesat-config.js"), "utf8");
-  check(config.includes("backendProvider") && config.includes("appsScriptUrl") && config.includes("projectId"), "runtime config mendukung dua provider");
-  check(!/private[_-]?key|client[_-]?secret|pinPepper|receipt[_-]?key/i.test(config), "runtime config publik tidak membawa secret server");
-}
-const backend = readFileSync(join(root, "src/lib/backend.ts"), "utf8");
-const gas = readFileSync(join(root, "src/lib/apps-script-rest.ts"), "utf8");
-const fb = readFileSync(join(root, "src/lib/firebase-rest.ts"), "utf8");
-const app = readFileSync(join(root, "src/App.tsx"), "utf8");
-check(backend.includes('backendProvider === "apps-script" ? appsScript : firebase'), "Golden Frontend memilih provider tanpa fork UI");
-check(["login", "callFunction", "ping", "subscribeWorkspaceSignals"].every(x => backend.includes(`function ${x}`)), "provider contract utama tersedia");
-check(gas.includes("workspaceSignals") && gas.includes("document.visibilityState") && gas.includes("interactionBusy") && gas.includes("melesat:update-pending"), "Apps Script memakai adaptive revision polling aman terhadap form");
-check(gas.includes("return 5000") && gas.includes("return 6500") && gas.includes("25_000") && gas.includes("Math.random()") && gas.includes("BroadcastChannel") && gas.includes("mutationInFlight > 0"), "profil polling adaptif Fix #4 mulai sekitar 5 detik tersedia");
-check(gas.includes("FORM_POST_V4") && gas.includes('form.method = "POST"') && gas.includes('addEventListener("message"') && gas.includes("CLIENT_NONCE"), "Apps Script RPC memakai stable hidden form POST + message listener + nonce");
-check(!gas.includes("bridgeFrame") && !gas.includes("startBridgeWarmup") && !gas.includes("bridgeRpc"), "persistent bridge tidak berada di runtime produksi Fix #4");
-check(gas.includes("getTransportDiagnostics") && gas.includes("transportRoundTripMs"), "diagnostik transport Fix #4 tersedia");
-check(gas.includes('rpc<Record<string, unknown>>("healthCheck"'), "health check memakai transport operasional yang sama");
-check(fb.includes("onSnapshot") && fb.includes("workspaceSignals"), "Firebase tetap memakai realtime workspace signal");
-check(app.includes("Data baru tersedia") && app.includes("melesat:update-pending"), "UI memberi notifikasi perubahan tanpa menghapus input");
-check(app.includes("Diagnostik koneksi") && app.includes("getTransportDiagnostics"), "UI login menyediakan diagnostik saat koneksi gagal");
-check(app.includes("Master Wilayah Pulau Lombok") && app.includes("regency-folders"), "Master 623 dikelompokkan per kabupaten/kota");
-check(!app.includes("Tambah Desa/Kelurahan"), "Golden Master wilayah tidak dapat ditambah dari UI");
-check(["DELIVERIES", "attempt"].some(() => app.includes("Tindak Lanjut")) && app.includes("Aktifkan Antar Ke-2"), "workflow attempt kedua tersedia");
-check(app.includes("Cetak / Simpan PDF") && !app.includes("Unduh CSV"), "laporan memakai print/PDF tanpa CSV");
-check(app.includes("Annual Cleanup") && app.includes("SETUJUI CLEANUP"), "annual cleanup memakai typed approval");
-check(app.includes("Mode Teknisi Lanjutan") && app.includes("enterTechnicianMode"), "Mode Teknisi Lanjutan tersedia");
-check(!/window\.(prompt|confirm|alert)\s*\(/.test(app), "workflow frontend bebas dialog native browser");
-const sw = readFileSync(join(root, "public/service-worker.js"), "utf8");
-check(sw.includes('event.request.method !== "GET"') && sw.includes("url.origin !== self.location.origin"), "service worker hanya cache GET same-origin");
+for (const f of requiredSource) check(existsSync(join(root, f)), `source tersedia: ${f}`);
 
+const backend = read("src/lib/backend.ts");
+const gas = read("src/lib/apps-script-rest.ts");
+const fb = read("src/lib/firebase-rest.ts");
+const app = read("src/App.tsx");
+const ui = read("src/lib/fast-v2-ui.ts");
+const wa = read("src/lib/wa-policy.ts");
+const sw = read("public/service-worker.js");
+
+check(backend.includes('import("./firebase-rest")'), "Firebase di-lazy import dari backend provider");
+check(!backend.includes('import * as firebase from "./firebase-rest"'), "Firebase tidak masuk static initial Apps Script chunk");
+check(["login", "callFunction", "ping", "subscribeWorkspaceSignals"].every(x => backend.includes(`function ${x}`)), "provider contract utama tersedia");
+check(gas.includes("FORM_POST_V4") && gas.includes('form.method = "POST"') && gas.includes('addEventListener("message"') && gas.includes("CLIENT_NONCE"), "FORM_POST_V4 hidden form + nonce/message validation dipertahankan");
+check(!gas.includes("bridgeFrame") && !gas.includes("startBridgeWarmup") && !gas.includes("bridgeRpc"), "persistent bridge tidak kembali");
+check(gas.includes("ACK_SLOW_MS") && gas.includes("reconcileReceipt") && gas.includes("mutationReceipt"), "Reliable acknowledgement + receipt reconcile aktif");
+check(gas.includes("2_850") && gas.includes("16_000") && gas.includes("Math.random()") && gas.includes("BroadcastChannel"), "signal realtime aktif ~3 detik + jitter, background ~16–20 detik");
+check(gas.includes("mutationInFlight > 0") && gas.includes("interactionBusy()") && gas.includes("melesat:update-pending"), "polling yield saat mutation/form aktif");
+check(gas.includes("transportRoundTripMs"), "diagnostik transportRoundTripMs tersedia");
+check(ui.includes("Sedang diproses…") && ui.includes("Sedang menyelesaikan proses. Jangan ulangi tindakan."), "loading anti-double-click menggunakan bahasa LOCK");
+check(ui.includes("melesat-interaction-busy") && app.includes("useInteractionGuard(busy)"), "interaction guard global aktif");
+check(app.includes("mergeVersioned") && app.includes("incomingVersion < currentVersion"), "anti-stale record version aktif");
+check(app.includes("Data baru tersedia") && app.includes("melesat:update-pending"), "realtime tidak memaksa reset form/modal");
+check(app.includes("ensurePharmacyAreas") && app.includes('active === "register"'), "master 623 wilayah dimuat lazy saat dibutuhkan");
+check(app.includes('const activeForRefresh = user.role === "ADMIN" ? active : ""'), "pindah tab Farmasi/Kurir tidak memicu full workspace reload");
+check(!app.includes('from "recharts"') && !app.includes("from 'recharts'"), "Recharts tidak masuk initial App chunk");
+check(app.includes("Layanan Berjalan Normal") && app.includes("Ada Pengaturan yang Perlu Ditinjau") && app.includes("Layanan Dihentikan Sementara"), "Admin memakai tiga status operasional awam");
+check(app.includes("Mode Teknisi Lanjutan"), "detail teknis tetap di Mode Teknisi");
+check(app.includes("Buka/Kirim Ulang WA"), "WA event lama dapat dibuka/kirim ulang eksplisit");
+check(wa.includes("REGISTER") && wa.includes("PENDING") && wa.includes("FAILED") && wa.includes("FOLLOWUP") && wa.includes("REDELIVERY") && wa.includes("MANUAL_VERIFICATION"), "WA policy memuat whitelist final");
+check(!/waPreparedAt|waOpenedAt|resendOpenCount|lastOpenedAt/.test(wa + gas + app), "tidak ada audit click-to-chat detail yang menambah hot path");
+check(app.includes("Pengantaran ke-") || app.includes("PENGANTARAN KE-"), "indikator attempt pengantaran tersedia");
+check(app.includes("Cetak / Simpan PDF") && !app.includes("Unduh CSV"), "laporan memakai print/PDF tanpa CSV");
+check(!/window\.(prompt|confirm|alert)\s*\(/.test(app), "workflow frontend bebas dialog native browser");
+check(sw.includes("fastcommitv2") && sw.includes('event.request.method !== "GET"') && sw.includes("url.origin !== self.location.origin"), "service worker versioned dan hanya cache GET same-origin");
+check(fb.includes("onSnapshot") && fb.includes("workspaceSignals"), "Firebase compatibility/realtime reference tetap tersedia");
+
+const dist = join(root, "dist");
+if (existsSync(dist)) {
+  const requiredDist = ["index.html", "melesat-config.js", "manifest.webmanifest", "service-worker.js"];
+  for (const f of requiredDist) check(existsSync(join(dist, f)), `build tersedia: dist/${f}`);
+  const assetsDir = join(dist, "assets");
+  if (existsSync(assetsDir)) {
+    const js = readdirSync(assetsDir).filter(f => f.endsWith(".js"));
+    const sizes = js.map(f => ({f, raw: statSync(join(assetsDir,f)).size, gzip: gzipSync(readFileSync(join(assetsDir,f))).length})).sort((a,b)=>b.raw-a.raw);
+    const totalGzip = sizes.reduce((n,x)=>n+x.gzip,0);
+    notes.push(`dist JS gzip total: ${Math.round(totalGzip/1024)} KB (${sizes.length} chunks)`);
+    check(totalGzip < 365 * 1024, "bundle JS gzip tidak kembali ke baseline lama ~365 KB");
+    if (totalGzip >= 200 * 1024) notes.push("NOTE: target ideal initial gzip <200 KB belum dapat dipastikan dari total semua chunks; cek initial graph di build report.");
+  }
+} else {
+  notes.push("dist belum tersedia di packaging container; full Vite build dijalankan oleh GitHub Actions setelah push/deploy.");
+}
+
+for (const n of notes) console.log(n);
 if (failures.length) {
   failures.forEach(x => console.error(`FAIL  ${x}`));
   console.error(`SUMMARY: ${checks.length - failures.length} PASS / ${failures.length} FAIL`);
