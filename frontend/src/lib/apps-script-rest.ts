@@ -53,7 +53,7 @@ const raw = window.MELESAT_CONFIG || {};
 export const config = {
   backendProvider: String(raw.backendProvider || "apps-script").toLowerCase(),
   appsScriptUrl: String(raw.appsScriptUrl || ""),
-  appVersion: String(raw.appVersion || "1.1.0-UAT-FAST-COMMIT-V2"),
+  appVersion: String(raw.appVersion || "PRODUKSI-V1"),
 };
 
 const KEY = "melesat.session.v1.apps-script";
@@ -70,7 +70,7 @@ const MUTATION_METHODS = new Set([
   "planRedelivery", "createRedelivery", "scheduleRedelivery", "markSelfPickup", "confirmSelfPickup",
   "closeFailedCase", "manualVerifyReceipt", "reportCourierIncident", "resolveCourierIncident",
   "adminVerifyCourierIncident", "verifyCourierIncident", "adminCorrectStatus",
-  "adminAccountCreate", "adminAccountUpdate", "adminAccountChangePin",
+  "adminAccountCreate", "adminAccountUpdate", "adminAccountChangePin", "adminAccountStorePin",
   "adminServiceAreaUpsert", "adminServiceAreasBulkUpdate", "adminOperationalSettingsUpdate",
   "adminCreateBackup", "adminRunArchiveSync", "adminPrepareCleanup", "adminApproveCleanup", "adminRunCleanupBatch",
   "technicianRestoreBackup", "technicianRestoreCheckpoint", "technicianRecoverTransaction",

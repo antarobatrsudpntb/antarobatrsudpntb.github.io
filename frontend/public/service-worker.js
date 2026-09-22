@@ -1,4 +1,4 @@
-const CACHE = "melesat-shell-v1.1.2-golden-hardening";
+const CACHE = "melesat-shell-produksi-v1";
 const SHELL = ["./", "./manifest.webmanifest", "./melesat-config.js", "./assets/icon-192.png", "./assets/logo-rsud-ntb.webp", "./assets/maskot-melesat.png"];
 
 self.addEventListener("install", (event) => {

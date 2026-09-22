@@ -1,19 +1,14 @@
-# MELESAT Golden Frontend v1.0.0
+# MELESAT Produksi V1 — Frontend
 
-React/PWA resmi untuk Farmasi, Kurir, Admin, dan Manajemen. Frontend ini **tidak di-fork berdasarkan backend**.
+PWA resmi Farmasi, Kurir, Admin, dan Manajemen. Provider produksi adalah **Apps Script / FORM_POST_V4**.
 
-Pilih provider melalui `public/melesat-config.js`:
-- `backendProvider: "apps-script"` untuk pilot Google Apps Script + Sheets.
-- `backendProvider: "firebase"` untuk Firestore + Cloud Functions.
+Konfigurasi utama: `public/melesat-config.js` → `backendProvider: "apps-script"` dan URL Web App `/exec`.
 
-Jangan menaruh PIN, pepper, receipt key, service-account key, atau secret server di frontend.
-
-Perintah build:
+Build:
 ```text
 pnpm install --frozen-lockfile
 pnpm run build
 pnpm run verify
-pnpm run preview
 ```
 
-Build produksi berada di `dist/`. Workflow GitHub Pages tersedia di root repository.
+Catatan: PIN tidak ditulis pada source/config frontend. Dashboard Admin menerima PIN Vault hanya setelah sesi Admin terautentikasi.

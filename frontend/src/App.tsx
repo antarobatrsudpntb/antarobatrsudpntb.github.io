@@ -843,8 +843,9 @@ function AdminView({ active, data, areas, areaCount, transactionCount, activeAcc
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [expandedRegencies, setExpandedRegencies] = useState<Set<string>>(() => new Set(["Kota Mataram"]));
-  const [accountDialog, setAccountDialog] = useState<"create" | "edit" | "pin" | null>(null);
+  const [accountDialog, setAccountDialog] = useState<"create" | "edit" | "pin" | "vault" | null>(null);
   const [accountForm, setAccountForm] = useState({ currentUsername: "", username: "", name: "", role: "FARMASI", active: true, pin: "", pinConfirm: "", adminPin: "", note: "" });
+  const [visiblePins, setVisiblePins] = useState<Set<string>>(() => new Set());
   const [areaDialog, setAreaDialog] = useState<"edit" | null>(null);
   const [areaForm, setAreaForm] = useState({ areaId: "", province: "Nusa Tenggara Barat", regency: "", district: "", village: "", coverageStatus: "BELUM DITETAPKAN", feePolicy: "BELUM DITETAPKAN", baseDeliveryFee: "0", subsidyAmount: "0", patientFee: "0", adminPin: "" });
   const [settingDialog, setSettingDialog] = useState<{ kind: "OPTIONS" | "TEMPLATE"; key: string; label: string } | null>(null);
@@ -939,6 +940,10 @@ function AdminView({ active, data, areas, areaCount, transactionCount, activeAcc
     if (result) { setTechPreview(null); setTechConfirmation(""); const list = await invoke<{ rows: Row[] }>("adminRecoveryRegistry", { limit: 40 }); setRecoveryRows(list?.rows || []); }
   }
 
+  function toggleAccountPin(accountId: string) {
+    setVisiblePins((current) => { const next = new Set(current); if (next.has(accountId)) next.delete(accountId); else next.add(accountId); return next; });
+  }
+
   function openCreateAccount() {
     setAccountForm({ currentUsername: "", username: "", name: "", role: "FARMASI", active: true, pin: "", pinConfirm: "", adminPin: "", note: "" });
     setAccountDialog("create");
@@ -954,6 +959,11 @@ function AdminView({ active, data, areas, areaCount, transactionCount, activeAcc
     setAccountDialog("pin");
   }
 
+  function openVaultAccount(row: Row) {
+    setAccountForm({ currentUsername: String(get(row, "username")), username: String(get(row, "username")), name: String(get(row, "name")), role: String(get(row, "role")), active: get(row, "active") !== false, pin: "", pinConfirm: "", adminPin: "", note: String(get(row, "note") || "") });
+    setAccountDialog("vault");
+  }
+
   async function submitAccount(event: FormEvent) {
     event.preventDefault();
     if (!/^\d{4,6}$/.test(accountForm.adminPin)) return show("error", "PIN Admin harus 4–6 angka.");
@@ -965,6 +975,12 @@ function AdminView({ active, data, areas, areaCount, transactionCount, activeAcc
     }
     if (accountDialog === "edit") {
       const ok = await act("adminAccountUpdate", { requestId: requestId("account_update"), currentUsername: accountForm.currentUsername, username: accountForm.username, name: accountForm.name, role: accountForm.role, active: accountForm.active, note: accountForm.note, adminPin: accountForm.adminPin }, "Data akun berhasil diperbarui.");
+      if (ok) setAccountDialog(null);
+      return;
+    }
+    if (accountDialog === "vault") {
+      if (!/^\d{4,6}$/.test(accountForm.pin)) return show("error", "PIN petugas harus 4–6 angka.");
+      const ok = await act("adminAccountStorePin", { requestId: requestId("account_pin_vault"), username: accountForm.currentUsername, pin: accountForm.pin, adminPin: accountForm.adminPin }, "PIN petugas berhasil direkam ke PIN Vault tanpa mengubah PIN login.");
       if (ok) setAccountDialog(null);
       return;
     }
@@ -1061,9 +1077,9 @@ function AdminView({ active, data, areas, areaCount, transactionCount, activeAcc
     MANUAL_VERIFICATION_METHODS: "Metode Verifikasi Farmasi",
   };
 
-  const accountModal = accountDialog ? <Modal title={accountDialog === "create" ? "Tambah Akun" : accountDialog === "edit" ? "Kelola Akun" : "Ganti PIN"} text={accountDialog === "pin" ? `Buat PIN baru untuk ${accountForm.name}. PIN lama tidak dapat dilihat.` : "Setiap perubahan membutuhkan konfirmasi PIN Admin dan dicatat dalam audit."} onClose={() => !busy && setAccountDialog(null)}>
+  const accountModal = accountDialog ? <Modal title={accountDialog === "create" ? "Tambah Akun" : accountDialog === "edit" ? "Kelola Akun" : accountDialog === "vault" ? "Simpan PIN ke Vault" : "Ganti PIN"} text={accountDialog === "pin" ? `Buat PIN baru untuk ${accountForm.name}. PIN baru otomatis tersimpan di PIN Vault.` : accountDialog === "vault" ? `Masukkan PIN login ${accountForm.name} yang sekarang. PIN login tidak diubah.` : "Setiap perubahan membutuhkan konfirmasi PIN Admin dan dicatat dalam audit."} onClose={() => !busy && setAccountDialog(null)}>
     <form className="modal-form" onSubmit={submitAccount}>
-      {accountDialog !== "pin" && <div className="form-grid">
+      {!(["pin", "vault"] as string[]).includes(String(accountDialog)) && <div className="form-grid">
         <Field label="Nama petugas"><input required value={accountForm.name} onChange={(e) => setAccountForm({ ...accountForm, name: e.target.value })} /></Field>
         <Field label="Username" hint={accountForm.role === "ADMIN" ? "Username Admin tunggal dikunci." : "Gunakan satu kata; underscore diperbolehkan."}><input required disabled={accountForm.role === "ADMIN"} value={accountForm.username} onChange={(e) => setAccountForm({ ...accountForm, username: e.target.value.replace(/\s/g, "_") })} /></Field>
         <Field label="Peran"><select disabled={accountForm.role === "ADMIN"} value={accountForm.role} onChange={(e) => setAccountForm({ ...accountForm, role: e.target.value })}>{accountForm.role === "ADMIN" && <option value="ADMIN">ADMIN</option>}<option value="FARMASI">FARMASI</option><option value="KURIR">KURIR</option><option value="MANAJEMEN">MANAJEMEN</option></select></Field>
@@ -1071,10 +1087,11 @@ function AdminView({ active, data, areas, areaCount, transactionCount, activeAcc
         <Field label="Catatan" hint="Opsional; tidak berisi PIN."><input value={accountForm.note} onChange={(e) => setAccountForm({ ...accountForm, note: e.target.value })} /></Field>
         {accountDialog === "create" && <PinInput label="PIN awal" value={accountForm.pin} onChange={(pin) => setAccountForm({ ...accountForm, pin })} />}
       </div>}
+      {accountDialog === "vault" && <div className="form-grid"><PinInput label="PIN petugas saat ini" value={accountForm.pin} onChange={(pin) => setAccountForm({ ...accountForm, pin })} /></div>}
       {accountDialog === "pin" && <div className="form-grid"><PinInput label="PIN baru" value={accountForm.pin} onChange={(pin) => setAccountForm({ ...accountForm, pin })} /><PinInput label="Ulangi PIN baru" value={accountForm.pinConfirm} onChange={(pinConfirm) => setAccountForm({ ...accountForm, pinConfirm })} /></div>}
       <div className="secure-confirm"><ShieldCheck /><div><strong>Konfirmasi tindakan</strong><p>Masukkan PIN akun Admin yang sedang digunakan.</p></div></div>
       <PinInput label="PIN Admin" value={accountForm.adminPin} onChange={(adminPin) => setAccountForm({ ...accountForm, adminPin })} />
-      <footer className="modal-actions"><button type="button" className="secondary-button" onClick={() => setAccountDialog(null)} disabled={busy}>Batal</button><button className="primary-button" disabled={busy}>{busy ? <LoaderCircle className="spin" /> : accountDialog === "pin" ? <KeyRound /> : <Save />}{accountDialog === "create" ? "Simpan Akun" : accountDialog === "edit" ? "Simpan Perubahan" : "Ganti PIN"}</button></footer>
+      <footer className="modal-actions"><button type="button" className="secondary-button" onClick={() => setAccountDialog(null)} disabled={busy}>Batal</button><button className="primary-button" disabled={busy}>{busy ? <LoaderCircle className="spin" /> : accountDialog === "pin" ? <KeyRound /> : <Save />}{accountDialog === "create" ? "Simpan Akun" : accountDialog === "edit" ? "Simpan Perubahan" : accountDialog === "vault" ? "Simpan ke Vault" : "Ganti PIN"}</button></footer>
     </form>
   </Modal> : null;
 
@@ -1179,8 +1196,8 @@ function AdminView({ active, data, areas, areaCount, transactionCount, activeAcc
     </div>}
   </Modal> : null;
 
-  if (active === "accounts") return <div className="content-stack"><SectionTitle title="Akun & Akses" text="Kelola profil, peran, status, dan PIN tanpa pernah menampilkan PIN atau hash." action={<button className="primary-button" onClick={openCreateAccount}><Plus /> Tambah Akun</button>} />
-    <div className="table-card account-table"><table><thead><tr><th>Petugas</th><th>Username</th><th>Peran</th><th>Status</th><th>Aksi</th></tr></thead><tbody>{accounts.map((row) => <tr key={rowId(row) || get(row, "username")}><td><strong>{get(row, "name", "Nama")}</strong><small>{get(row, "pinConfigured") ? "PIN tersimpan aman" : "PIN belum tersedia"}</small></td><td><code>{get(row, "username", "Username")}</code></td><td>{get(row, "role", "Role")}</td><td><Badge status={get(row, "active", "Aktif") === false ? "NONAKTIF" : "AKTIF"} /></td><td><div className="row-actions"><button className="secondary-button small" onClick={() => openEditAccount(row)}><Edit3 /> Kelola</button><button className="secondary-button small" onClick={() => openPinAccount(row)}><KeyRound /> Ganti PIN</button></div></td></tr>)}</tbody></table></div>{accountModal}</div>;
+  if (active === "accounts") return <div className="content-stack"><SectionTitle title="Akun & Akses" text="Kelola profil, peran, status, dan PIN petugas. Login tetap menggunakan hash; PIN operasional hanya ditampilkan untuk Admin." action={<button className="primary-button" onClick={openCreateAccount}><Plus /> Tambah Akun</button>} />
+    <div className="table-card account-table"><table><thead><tr><th>Petugas</th><th>Username</th><th>Peran</th><th>PIN</th><th>Status</th><th>Aksi</th></tr></thead><tbody>{accounts.map((row) => { const accountId = String(rowId(row) || get(row, "username")); const pin = String(get(row, "pin") || ""); const visible = visiblePins.has(accountId); return <tr key={accountId}><td><strong>{get(row, "name", "Nama")}</strong><small>{pin ? "PIN tersedia di Vault" : "PIN belum direkam di Vault"}</small></td><td><code>{get(row, "username", "Username")}</code></td><td>{get(row, "role", "Role")}</td><td>{pin ? <button type="button" className="pin-vault-button" onClick={() => toggleAccountPin(accountId)} aria-label={visible ? "Sembunyikan PIN" : "Tampilkan PIN"}><code>{visible ? pin : "••••"}</code>{visible ? <EyeOff /> : <Eye />}</button> : <button type="button" className="pin-vault-missing" onClick={() => openVaultAccount(row)}><KeyRound /> Simpan PIN</button>}</td><td><Badge status={get(row, "active", "Aktif") === false ? "NONAKTIF" : "AKTIF"} /></td><td><div className="row-actions"><button className="secondary-button small" onClick={() => openEditAccount(row)}><Edit3 /> Kelola</button><button className="secondary-button small" onClick={() => openPinAccount(row)}><KeyRound /> Ganti PIN</button></div></td></tr>; })}</tbody></table></div>{accountModal}</div>;
   if (active === "areas") return <div className="content-stack"><SectionTitle title="Master Wilayah Pulau Lombok" text={`${(areaCount || areas.length).toLocaleString("id-ID")} Desa/Kelurahan resmi. Admin mengatur cakupan dan biaya tanpa menambah/menghapus identitas wilayah.`} />
     <div className="area-toolbar"><div className="filter-line"><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari desa, kecamatan, kabupaten…" /></div></div>
     {filteredAreas.length ? <div className="regency-folders">{groupedAreas.map(([regency, rows]) => { const open = Boolean(query.trim()) || expandedRegencies.has(regency); const activeCount = rows?.filter(area => get(area, "coverageStatus") === "AKTIF").length || 0; return <section className={`regency-folder ${open ? "open" : ""}`} key={regency}><button className="regency-folder-head" type="button" onClick={() => toggleRegency(regency)} aria-expanded={open}><span className="folder-icon">{open ? <FolderOpen /> : <Folder />}</span><span><strong>{regency}</strong><small>{rows?.length || 0} Desa/Kelurahan • {activeCount} aktif</small></span><ChevronDown /></button>{open && <div className="area-grid">{rows?.map((a) => { const id = areaKey(a); const policy = String(get(a, "feePolicy")); return <article className="area-card" key={id}><div className="area-card-head"><div><small>{get(a, "district")}</small><h3>{get(a, "village")}</h3><p>Kode {get(a, "kodeWilayah", "officialCode") || id}{get(a, "kodePos", "postalCode") ? ` • Kode Pos ${get(a, "kodePos", "postalCode")}` : ""}</p></div><button className="area-edit" onClick={() => openEditArea(a)} aria-label={`Kelola ${get(a, "village")}`}><Edit3 /></button></div><div><Badge status={String(get(a, "coverageStatus"))} /><span className="fee">{policy === "SUBSIDI" ? `Tarif ${money(get(a, "baseDeliveryFee"))} • Subsidi ${money(get(a, "subsidyAmount"))} • Pasien ${money(get(a, "patientFee"))}` : `${policy} • ${money(get(a, "patientFee"))}`}</span></div></article>; })}</div>}</section>; })}</div> : <Empty icon={<MapPin />} title={areas.length ? "Wilayah tidak ditemukan" : "Master wilayah masih kosong"} text={areas.length ? "Ubah kata pencarian untuk melihat wilayah lain." : "Jalankan seed Master Pulau Lombok lalu muat ulang halaman."} />}{areaModal}</div>;
