@@ -1,5 +1,5 @@
-﻿/*
- * MELESAT FAST COMMIT V2 Frontend v1.1.0
+/*
+ * MELESAT Minor Polishing Frontend v1.1.1
  * Pilih satu backend tanpa mengubah UI/workflow.
  */
 window.MELESAT_CONFIG = {
@@ -13,4 +13,3 @@ window.MELESAT_CONFIG = {
   emulator: false,
   appVersion: "1.1.1-UAT-MINOR-POLISH",
 };
-

@@ -199,9 +199,10 @@ button:disabled { opacity: .5; cursor: wait; transform: none !important; box-sha
 .delivery-head h3 { margin: 5px 0 0; color: var(--navy); font-size: 16px; }
 .status { display: inline-flex; align-items: center; width: fit-content; border-radius: 999px; padding: 6px 9px; background: #edf3f5; color: #5a7280; white-space: nowrap; font-size: 9px; font-weight: 850; letter-spacing: .055em; }
 .status--menunggu-diproses, .status--belum-ditetapkan { background: #fff0e4; color: #ba5a0c; }
-.status--siap-diantar, .status--aktif, .status--sehat, .status--terverifikasi { background: #e4f8ee; color: #087d53; }
+.status--siap-diantar { background: #e3f6f5; color: #08736f; }
+.status--aktif, .status--sehat, .status--terverifikasi { background: #dff5f1; color: #087266; }
 .status--dalam-perjalanan, .status--claim-individual { background: #e7f1fc; color: #0961aa; }
-.status--terkirim { background: #e0f6ed; color: #08734e; }
+.status--terkirim { background: #e2f6e9; color: #087047; }
 .status--gagal-antar, .status--offline, .status--nonaktif, .status--ditolak { background: #fde9e9; color: #b93737; }
 .status--menunggu-verifikasi { background: #fff4db; color: #a66700; }
 .delivery-meta { display: flex; flex-wrap: wrap; gap: 8px 15px; margin: 15px 0 10px; color: #6f8593; font-size: 11px; }
@@ -470,13 +471,12 @@ code { padding: 4px 7px; border-radius: 6px; background: #edf4f6; color: #315267
 .today-patient small { max-width: 230px; margin-top: 4px; overflow: hidden; color: #9aabb4; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .today-actions { justify-self: end; }
 .today-actions .action-row { justify-content: flex-end; }
-.status--gagal-antar-1-menunggu-obat-kembali,
-.status--gagal-antar-2-menunggu-obat-kembali,
-.status--gagal-antar-1-perlu-tindak-lanjut,
-.status--gagal-antar-2-perlu-tindak-lanjut { background: #fff0e1; color: #a95708; }
-.status--pengantaran-ulang-direncanakan { background: #e7f1fc; color: #0961aa; }
-.status--menunggu-ambil-mandiri { background: #f0ebff; color: #6949c3; }
-.status--pending { background: #fff2d8; color: #9b6400; }
+.status--menunggu-obat-kembali { background: #fff0e1; color: #a95708; }
+.status--perlu-tindak-lanjut { background: #f1ebff; color: #6742b8; }
+.status--pengantaran-ulang-direncanakan { background: #e8edff; color: #3e57ad; }
+.status--menunggu-ambil-mandiri { background: #f3eaff; color: #7047b7; }
+.status--pengantaran-ditunda, .status--pending { background: #fff4d8; color: #966300; }
+.status--kendala-aktif { background: #fdecea; color: #b4472f; }
 .status--klaim-per-paket { background: #e7f1fc; color: #0961aa; }
 
 /* Operational dialogs */
@@ -793,3 +793,5 @@ code { padding: 4px 7px; border-radius: 6px; background: #edf4f6; color: #315267
 @keyframes fastv2spin{to{transform:rotate(360deg)}}
 .toast{z-index:2147483640!important}
 .simple-trend-chart{width:100%;height:260px;overflow:hidden}.simple-trend-chart svg{width:100%;height:100%}.trend-grid{stroke:#dfeaec;stroke-width:1;stroke-dasharray:6 6}.trend-area{fill:rgba(11,111,202,.16)}.trend-line{fill:none;stroke:#0b6fca;stroke-width:4;vector-effect:non-scaling-stroke}.trend-dot{fill:#fff;stroke:#0b6fca;stroke-width:3;vector-effect:non-scaling-stroke}.simple-trend-chart text{font-size:12px;fill:#607989}
+
+.workflow-orange{border-color:#efbd83!important;background:#fff5e9!important;color:#a95708!important}.workflow-purple{border-color:#d6c6f5!important;background:#f6f1ff!important;color:#6742b8!important}.workflow-indigo{border-color:#c7d1f7!important;background:#eef1ff!important;color:#3e57ad!important}.workflow-violet{border-color:#dbc8f5!important;background:#f7f1ff!important;color:#7047b7!important}
