@@ -19,7 +19,7 @@ installFastV2UiFeedback();
 
 type Row = Record<string, any>;
 type Toast = { type: "success" | "error"; message: string } | null;
-type WhatsAppDialog = { title: string; actions: Array<{ label?: string; action: Row }>; record?: Row; allowPrint?: boolean } | null;
+type WhatsAppDialog = { title: string; actions: Array<{ label?: string; action: Row }>; record?: Row; printAfterClose?: boolean } | null;
 type OperationalOptions = Record<string, string[]>;
 
 const OPTION_FALLBACKS: OperationalOptions = {
@@ -83,6 +83,12 @@ function dateText(value: unknown) {
 }
 function todayKey() { return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(new Date()); }
 function monthStart() { return `${todayKey().slice(0, 7)}-01`; }
+function normalizeRmClient(value: unknown) { return String(value ?? "").trim().toUpperCase().replace(/\s+/g, ""); }
+function duplicateTodayClient(rows: Row[], rm: unknown, excludeId = "") {
+  const normalized = normalizeRmClient(rm), today = todayKey();
+  if (!normalized) return null;
+  return rows.find((row) => rowId(row) !== excludeId && String(get(row, "registeredDateKey", "Tanggal Daftar")).slice(0, 10) === today && normalizeRmClient(get(row, "rm", "No RM")) === normalized) || null;
+}
 
 function witaTextDateKey(value: unknown) {
   const match = String(value || "").match(/^(\d{2})\/(\d{2})\/(\d{4})/);
@@ -112,6 +118,7 @@ function escapeHtml(value: unknown) {
 }
 
 function printLabelWindow(target: Window, record: Row) {
+  const logoUrl = new URL("./assets/logo-rsud-ntb.webp", window.location.href).href;
   const fee = Number(get(record, "deliveryFeeSnapshot", "Biaya Pengantaran") || 0);
   const feePolicy = String(get(record, "feePolicySnapshot", "Kebijakan Biaya") || (fee > 0 ? "BERBAYAR" : "GRATIS"));
   const subsidy = Number(get(record, "subsidyAmountSnapshot", "Nilai Subsidi") || 0);
@@ -123,8 +130,23 @@ function printLabelWindow(target: Window, record: Row) {
   target.document.open();
   target.document.write(`<!doctype html><html lang="id"><head><meta charset="utf-8"><title>Label ${escapeHtml(deliveryCode(record))}</title><style>
     @page{size:A6 portrait;margin:8mm}*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;color:#082f5f}.label{min-height:132mm;border:2px solid #0a5da8;border-radius:12px;padding:12px;display:flex;flex-direction:column}.head{display:flex;gap:9px;align-items:center;border-bottom:2px solid #dceaf2;padding-bottom:9px}.head img{width:44px;height:44px;object-fit:contain}.head strong,.head span{display:block}.head strong{font-size:14px}.head span{font-size:9px;color:#567184;margin-top:2px}.code{margin:13px 0 10px;font-size:22px;font-weight:900;letter-spacing:.04em}.name{font-size:18px;font-weight:800}.meta{margin:5px 0 12px;color:#456579;font-size:11px}.block{margin-top:9px;padding:9px;border-radius:8px;background:#f1f7fa;font-size:11px;line-height:1.45}.block b{display:block;color:#075ba7;font-size:9px;text-transform:uppercase;letter-spacing:.08em}.payment{border:1px solid #b9ead7;background:#edfbf5;color:#075f45}.payment strong{display:block;font-size:13px}.foot{margin-top:auto;padding-top:10px;border-top:1px dashed #aac2ce;text-align:center;color:#567184;font-size:9px;line-height:1.4}
-  </style></head><body><section class="label"><div class="head"><img src="./assets/logo-rsud-ntb.webp"><div><strong>RSUD Provinsi NTB</strong><span>MELESAT • Layanan Pengantaran Obat</span></div></div><div class="code">${escapeHtml(deliveryCode(record))}</div><div class="name">${escapeHtml(deliveryName(record))}</div><div class="meta">No. RM ${escapeHtml(get(record, "rm", "No RM") || "—")}</div><div class="block"><b>Alamat tujuan</b>${escapeHtml(address)}</div><div class="block"><b>Catatan alamat untuk Kurir</b>${escapeHtml(get(record, "courierNote", "Catatan Kurir") || get(record, "landmark", "Patokan Lokasi") || "—")}</div><div class="block payment"><b>${escapeHtml(feePolicy)}</b><strong>${escapeHtml(payment)}</strong>${fee > 0 ? "Kurir tidak menerima pembayaran." : feePolicy === "SUBSIDI" ? "Tidak ada tagihan kepada pasien maupun Kurir." : "Pasien tidak dikenakan biaya pengantaran."}</div><div class="foot">ID Sistem ${escapeHtml(systemId(record))}<br>Rahasia pasien • Tidak memuat informasi obat/diagnosis<br>Dicetak ${escapeHtml(new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Makassar" }).format(new Date()))} WITA</div></section><script>setTimeout(()=>window.print(),350)<\/script></body></html>`);
+  </style></head><body><section class="label"><div class="head"><img src="${escapeHtml(logoUrl)}"><div><strong>RSUD Provinsi NTB</strong><span>MELESAT • Layanan Pengantaran Obat</span></div></div><div class="code">${escapeHtml(deliveryCode(record))}</div><div class="name">${escapeHtml(deliveryName(record))}</div><div class="meta">No. RM ${escapeHtml(get(record, "rm", "No RM") || "—")}</div><div class="block"><b>Alamat tujuan</b>${escapeHtml(address)}</div><div class="block"><b>Catatan alamat untuk Kurir</b>${escapeHtml(get(record, "courierNote", "Catatan Kurir") || get(record, "landmark", "Patokan Lokasi") || "—")}</div><div class="block payment"><b>${escapeHtml(feePolicy)}</b><strong>${escapeHtml(payment)}</strong>${fee > 0 ? "Kurir tidak menerima pembayaran." : feePolicy === "SUBSIDI" ? "Tidak ada tagihan kepada pasien maupun Kurir." : "Pasien tidak dikenakan biaya pengantaran."}</div><div class="foot">ID Sistem ${escapeHtml(systemId(record))}<br>Rahasia pasien • Tidak memuat informasi obat/diagnosis<br>Dicetak ${escapeHtml(new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Makassar" }).format(new Date()))} WITA</div></section><script>const p=()=>setTimeout(()=>window.print(),150);if(document.readyState==="complete")p();else window.addEventListener("load",p,{once:true});<\/script></body></html>`);
   target.document.close();
+}
+
+function printLabel(record: Row) {
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("title", "Cetak label MELESAT");
+  iframe.setAttribute("aria-hidden", "true");
+  Object.assign(iframe.style, { position: "fixed", right: "0", bottom: "0", width: "1px", height: "1px", border: "0", opacity: "0", pointerEvents: "none" });
+  document.body.appendChild(iframe);
+  const target = iframe.contentWindow;
+  if (!target) { iframe.remove(); throw new Error("Dialog cetak tidak dapat disiapkan."); }
+  let removed = false;
+  const cleanup = () => { if (removed) return; removed = true; window.setTimeout(() => iframe.remove(), 300); };
+  target.addEventListener("afterprint", cleanup, { once: true });
+  printLabelWindow(target, record);
+  window.setTimeout(cleanup, 60000);
 }
 
 function useToast() {
@@ -241,24 +263,23 @@ function ConfirmDialog({ title, text, confirmLabel, onConfirm, onClose, busy = f
 }
 
 function WhatsAppResultModal({ dialog, onClose }: { dialog: NonNullable<WhatsAppDialog>; onClose: () => void }) {
-  return <Modal title={dialog.title} text={`${dialog.actions.length} pesan siap dibuka. Pesan tidak dikirim otomatis.`} onClose={onClose} wide={dialog.actions.length > 1}>
+  return <Modal title={dialog.title} text={`${dialog.actions.length} pesan siap dibuka. Pesan tidak dikirim otomatis.${dialog.printAfterClose ? " Setelah selesai, tutup dialog ini untuk mencetak label A6." : ""}`} onClose={onClose} wide={dialog.actions.length > 1}>
     <div className="wa-result-list">{dialog.actions.map((item, index) => <article className="wa-result" key={`${item.label || "wa"}-${index}`}>
       {item.label && <strong className="wa-label">{item.label}</strong>}
       <div className="wa-preview">{String(get(item.action, "message") || "Pesan WhatsApp siap.")}</div>
       <div className="modal-actions">
-        {dialog.allowPrint && dialog.record && index === 0 && <button className="secondary-button" onClick={() => { const popup = window.open("", "_blank", "width=720,height=820"); if (popup) printLabelWindow(popup, dialog.record!); }}><Printer /> Cetak Label</button>}
         <a className="primary-button" href={String(get(item.action, "url"))} target="_blank" rel="noreferrer"><MessageCircle /> Buka WhatsApp</a>
       </div>
     </article>)}</div>
   </Modal>;
 }
 
-function whatsAppDialogFromResult(title: string, result: Row, record?: Row, allowPrint = false): WhatsAppDialog {
-  if (result?.waAction) return { title, actions: [{ action: result.waAction as Row }], record, allowPrint };
+function whatsAppDialogFromResult(title: string, result: Row, record?: Row, printAfterClose = false): WhatsAppDialog {
+  if (result?.waAction) return { title, actions: [{ action: result.waAction as Row }], record, printAfterClose };
   const actions = Array.isArray(result?.waActions)
     ? result.waActions.filter((item: Row) => item?.waAction).map((item: Row) => ({ label: [get(item, "id"), get(item, "name")].filter(Boolean).join(" • "), action: item.waAction as Row }))
     : [];
-  return actions.length ? { title, actions, record, allowPrint } : null;
+  return actions.length ? { title, actions, record, printAfterClose } : null;
 }
 
 function PinInput({ value, onChange, placeholder = "4–6 angka", label = "PIN" }: { value: string; onChange: (value: string) => void; placeholder?: string; label?: string }) {
@@ -462,7 +483,7 @@ function FarmasiView({ active, data, areas, incidents, operationalOptions, ensur
   const [editForm, setEditForm] = useState({ rm: "", name: "", phone: "", address: "", areaKey: "", landmark: "", recipient: "", courierNote: "", paymentConfirmed: false });
   const [printAfterSave, setPrintAfterSave] = useState(true);
   const [waDialog, setWaDialog] = useState<WhatsAppDialog>(null);
-  const [duplicateDialog, setDuplicateDialog] = useState<{ kind: "register" | "edit"; duplicate: Row; printWindow?: Window | null } | null>(null);
+  const [duplicateDialog, setDuplicateDialog] = useState<{ kind: "register" | "edit"; duplicate: Row } | null>(null);
   const [readyRow, setReadyRow] = useState<Row | null>(null);
   const [followupRow, setFollowupRow] = useState<Row | null>(null);
   const [followupDate, setFollowupDate] = useState(todayKey());
@@ -486,30 +507,57 @@ function FarmasiView({ active, data, areas, incidents, operationalOptions, ensur
     if (active === "register" && !areas.length) void ensureAreas().catch((e) => show("error", e instanceof Error ? e.message : "Master wilayah gagal dimuat."));
   }, [active, areas.length, ensureAreas, show]);
 
-  function finishRegistration(result: Row, printWindow: Window | null) {
+  function printRecord(row: Row) {
+    try { printLabel(row); }
+    catch (error) { show("error", error instanceof Error ? error.message : "Dialog cetak tidak dapat dibuka."); }
+  }
+
+  function closeWaDialog() {
+    const current = waDialog;
+    setWaDialog(null);
+    if (current?.printAfterClose && current.record) printRecord(current.record as Row);
+  }
+
+  async function prepareRegistrationWa(record: Row, shouldPrint: boolean) {
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const wa = await callFunction<Row>("prepareWhatsApp", { eventType: "REGISTER", id: rowId(record) });
+        const dialog = whatsAppDialogFromResult("Pendaftaran berhasil • WA kode dapat dikirim sekarang atau nanti", wa, record, shouldPrint);
+        if (dialog) { setWaDialog(dialog); return; }
+        lastError = new Error("WA kode belum tersedia.");
+      } catch (error) { lastError = error; }
+      if (attempt === 0) await new Promise((resolve) => window.setTimeout(resolve, 350));
+    }
+    show("error", "Pendaftaran berhasil. WA kode belum disiapkan; gunakan tombol WA Kode di Hari Ini.");
+    if (shouldPrint) window.setTimeout(() => printRecord(record), 0);
+    if (lastError) console.warn("MELESAT registration WA preparation failed", lastError);
+  }
+
+  function finishRegistration(result: Row) {
     const record = (result.record || {}) as Row;
-    if (printWindow && Object.keys(record).length) printLabelWindow(printWindow, record); else printWindow?.close();
     show("success", `Pengantaran ${deliveryCode(record)} berhasil didaftarkan.`);
-    void callFunction<Row>("prepareWhatsApp", { eventType: "REGISTER", id: rowId(record) }).then(wa => { const d = whatsAppDialogFromResult("Pendaftaran berhasil • WA kode dapat dikirim sekarang atau nanti", wa, record, true); if (d) setWaDialog(d); }).catch(() => undefined);
     setForm({ rm: "", name: "", phone: "", address: "", areaKey: "", landmark: "", recipient: "", courierNote: "", paymentConfirmed: false });
     window.setTimeout(() => rmInputRef.current?.focus(), 0);
     onMutation(result);
+    if (Object.keys(record).length) void prepareRegistrationWa(record, printAfterSave);
   }
 
   async function register(event: FormEvent) {
     event.preventDefault();
     if (!selectedArea) return show("error", "Pilih Desa/Kelurahan dari hasil pencarian.");
     if (selectedFee > 0 && !form.paymentConfirmed) return show("error", "Konfirmasi bahwa biaya pengantaran sudah dibayar di Farmasi.");
-    const printWindow = printAfterSave ? window.open("", "_blank", "width=720,height=820") : null;
+    const localDuplicate = duplicateTodayClient(data, form.rm);
+    if (localDuplicate) { setDuplicateDialog({ kind: "register", duplicate: localDuplicate }); return; }
     setBusy(true);
     try {
-      let result = await callFunction<Row>("addDelivery", { requestId: requestId("add"), payload: form });
+      const result = await callFunction<Row>("addDelivery", { requestId: requestId("add"), payload: form });
       if (result.requiresDuplicateConfirmation) {
-        setDuplicateDialog({ kind: "register", duplicate: (result.duplicate || {}) as Row, printWindow });
+        setDuplicateDialog({ kind: "register", duplicate: (result.duplicate || {}) as Row });
         return;
       }
-      finishRegistration(result, printWindow);
-    } catch (e) { printWindow?.close(); show("error", e instanceof Error ? e.message : "Gagal mendaftarkan."); }
+      finishRegistration(result);
+    } catch (e) { show("error", e instanceof Error ? e.message : "Gagal mendaftarkan."); }
     finally { setBusy(false); }
   }
 
@@ -519,9 +567,8 @@ function FarmasiView({ active, data, areas, incidents, operationalOptions, ensur
     try {
       if (duplicateDialog.kind === "register") {
         const result = await callFunction<Row>("addDelivery", { requestId: requestId("add_confirm"), payload: { ...form, confirmDuplicate: true } });
-        const printWindow = duplicateDialog.printWindow || null;
         setDuplicateDialog(null);
-        finishRegistration(result, printWindow);
+        finishRegistration(result);
       } else if (editRecord) {
         const result = await callFunction<Row>("pharmacyUpdateWaitingDelivery", { requestId: requestId("edit_waiting_confirm"), id: rowId(editRecord), payload: { ...editForm, confirmDuplicate: true } });
         setDuplicateDialog(null); setEditRecord(null); show("success", "Pendaftaran berhasil diperbarui setelah konfirmasi duplikasi."); onMutation(result);
@@ -611,12 +658,6 @@ function FarmasiView({ active, data, areas, incidents, operationalOptions, ensur
     }
   }
 
-  function printRecord(row: Row) {
-    const popup = window.open("", "_blank", "width=720,height=820");
-    if (!popup) return show("error", "Browser memblokir jendela cetak. Izinkan pop-up untuk MELESAT.");
-    printLabelWindow(popup, row);
-  }
-
   function todayActions(row: Row) {
     const plannedDate = plannedDateOf(row);
     const redeliveryDue = operationalStateOf(row) === "REDELIVERY_PLANNED" && Boolean(plannedDate) && plannedDate <= todayKey();
@@ -625,7 +666,7 @@ function FarmasiView({ active, data, areas, incidents, operationalOptions, ensur
 
   const editModal = editRecord ? <Modal wide title={`Edit ${deliveryCode(editRecord)}`} text="Data hanya dapat diubah selama obat masih menunggu diproses. Setiap perubahan tercatat dalam jejak audit." onClose={() => !busy && setEditRecord(null)}><form className="modal-form" onSubmit={submitEdit}><div className="form-grid"><Field label="Nomor Rekam Medis"><input required value={editForm.rm} onChange={(e) => setEditForm({ ...editForm, rm: e.target.value })} /></Field><Field label="Nama Pasien"><input required value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} /></Field><Field label="Nomor WhatsApp"><input required inputMode="tel" value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} /></Field><Field label="Desa/Kelurahan" hint="Ketik lalu pilih hasil wilayah aktif."><AreaCombobox areas={areas} value={editForm.areaKey} onChange={(areaKey) => setEditForm({ ...editForm, areaKey, paymentConfirmed: false })} /></Field><Field label="Alamat lengkap"><textarea required value={editForm.address} onChange={(e) => setEditForm({ ...editForm, address: e.target.value })} /></Field><Field label="Catatan alamat untuk Kurir (opsional)" hint="Patokan rumah, gang, warna pagar, atau informasi alamat lain bila perlu."><textarea value={editForm.courierNote} onChange={(e) => setEditForm({ ...editForm, courierNote: e.target.value })} /></Field></div>{selectedEditArea && <div className={`registration-fee ${selectedEditFee > 0 ? "registration-fee--paid" : "registration-fee--free"}`}><WalletCards /><div><small>BIAYA PENGANTARAN</small><strong>{get(selectedEditArea, "feePolicy")} • {selectedEditFee > 0 ? money(selectedEditFee) : "GRATIS"}</strong><p>{selectedEditFee > 0 ? "Biaya dibayar di Farmasi; Kurir tidak menerima pembayaran." : "Pasien tidak ditagih oleh Kurir."}</p></div>{selectedEditFee > 0 && <label className="payment-check"><input type="checkbox" checked={editForm.paymentConfirmed} onChange={(e) => setEditForm({ ...editForm, paymentConfirmed: e.target.checked })} /><span>Biaya {money(selectedEditFee)} sudah diterima di Farmasi</span></label>}</div>}<footer className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={() => setEditRecord(null)}>Batal</button><button className="primary-button" disabled={busy || (selectedEditFee > 0 && !editForm.paymentConfirmed)}>{busy ? <LoaderCircle className="spin" /> : <Save />} Simpan Perubahan</button></footer></form></Modal> : null;
 
-  const duplicateModal = duplicateDialog ? <ConfirmDialog title="Nomor RM sudah terdaftar hari ini" text="Periksa data aktif berikut sebelum membuat pendaftaran kedua." confirmLabel="Tetap Daftarkan" busy={busy} danger onClose={() => { duplicateDialog.printWindow?.close(); setDuplicateDialog(null); }} onConfirm={confirmDuplicate}>
+  const duplicateModal = duplicateDialog ? <ConfirmDialog title="Nomor RM sudah terdaftar hari ini" text="Periksa pendaftaran pada hari yang sama berikut sebelum membuat pendaftaran kedua." confirmLabel="Tetap Daftarkan" busy={busy} danger onClose={() => setDuplicateDialog(null)} onConfirm={confirmDuplicate}>
     <div className="duplicate-summary"><TriangleAlert /><div><strong>{get(duplicateDialog.duplicate, "packageCode", "Kode Paket", "id") || "Paket aktif"}</strong><p>{get(duplicateDialog.duplicate, "name") || "Pasien"} • {get(duplicateDialog.duplicate, "status") || "Status aktif"}</p><small>{get(duplicateDialog.duplicate, "registeredAt") || "Hari ini"} • {[get(duplicateDialog.duplicate, "village"), get(duplicateDialog.duplicate, "district"), get(duplicateDialog.duplicate, "region")].filter(Boolean).join(" • ")}</small></div></div>
   </ConfirmDialog> : null;
 
@@ -659,16 +700,16 @@ function FarmasiView({ active, data, areas, incidents, operationalOptions, ensur
     </div>{selectedArea && <div className={`registration-fee ${selectedFee > 0 ? "registration-fee--paid" : "registration-fee--free"}`}><WalletCards /><div><small>BIAYA PENGANTARAN</small><strong>{get(selectedArea, "feePolicy")} • {get(selectedArea, "feePolicy") === "SUBSIDI" ? `Tarif ${money(selectedBaseFee)} − subsidi ${money(selectedSubsidy)} = ${money(selectedFee)}` : selectedFee > 0 ? money(selectedFee) : "GRATIS"}</strong><p>{selectedFee > 0 ? "Biaya setelah subsidi/tarif dibayar langsung di Farmasi. Kurir tidak menerima pembayaran." : get(selectedArea, "feePolicy") === "SUBSIDI" ? "Biaya pasien ditanggung penuh subsidi; Kurir tidak menerima pembayaran." : "Pasien tidak dikenakan biaya pengantaran."}</p></div>{selectedFee > 0 && <label className="payment-check"><input type="checkbox" checked={form.paymentConfirmed} onChange={(e) => setForm({ ...form, paymentConfirmed: e.target.checked })} /><span>Biaya {money(selectedFee)} sudah diterima di Farmasi</span></label>}</div>}
     <div className="registration-options"><label><input type="checkbox" checked={printAfterSave} onChange={(e) => setPrintAfterSave(e.target.checked)} /><span>Cetak label A6 setelah disimpan</span></label></div>
     <div className="form-summary"><ShieldCheck /><div><strong>Privasi pasien dijaga</strong><p>Detail klinis dan nama obat tidak dikirim ke tampilan Kurir.</p></div><button className="primary-button" disabled={busy || (selectedFee > 0 && !form.paymentConfirmed)}>{busy ? <LoaderCircle className="spin" /> : <Plus />} Daftarkan</button></div></form>
-    {duplicateModal}{waDialog && <WhatsAppResultModal dialog={waDialog} onClose={() => setWaDialog(null)} />}
+    {duplicateModal}{waDialog && <WhatsAppResultModal dialog={waDialog} onClose={closeWaDialog} />}
   </div>;
 
-  if (active === "today") return <div className="content-stack"><SectionTitle title="Pengantaran Hari Ini" text="Daftar ringkas berurutan ke bawah: cetak ulang label, kirim ulang WA kode, edit data menunggu, dan tandai obat siap." />{todayRows.length ? <div className="today-list">{todayRows.map((row) => <TodayDeliveryRow key={rowId(row)} row={row} actions={todayActions(row)} />)}</div> : <Empty icon={<CalendarDays />} title="Belum ada pengantaran hari ini" text="Data pendaftaran hari ini dan pekerjaan aktif akan muncul di sini." />}{editModal}{duplicateModal}{readyModal}{waDialog && <WhatsAppResultModal dialog={waDialog} onClose={() => setWaDialog(null)} />}</div>;
+  if (active === "today") return <div className="content-stack"><SectionTitle title="Pengantaran Hari Ini" text="Daftar ringkas berurutan ke bawah: cetak ulang label, kirim ulang WA kode, edit data menunggu, dan tandai obat siap." />{todayRows.length ? <div className="today-list">{todayRows.map((row) => <TodayDeliveryRow key={rowId(row)} row={row} actions={todayActions(row)} />)}</div> : <Empty icon={<CalendarDays />} title="Belum ada pengantaran hari ini" text="Data pendaftaran hari ini dan pekerjaan aktif akan muncul di sini." />}{editModal}{duplicateModal}{readyModal}{waDialog && <WhatsAppResultModal dialog={waDialog} onClose={closeWaDialog} />}</div>;
 
-  if (active === "followup") return <div className="content-stack"><SectionTitle title="Tindak Lanjut Gagal Antar" text="Maksimal dua kali pengantaran ke rumah. Rencana tetap di sini sampai Farmasi mengaktifkan pengantaran ulang pada tanggal jadwal." />{failed.length ? <div className="today-list">{failed.map((row) => { const state=operationalStateOf(row), due=plannedDateOf(row) <= todayKey(), attemptNo=Number(get(row,"attemptCount","Jumlah Percobaan")||1); const meta = state === "RETURN_WAITING" ? {label:"Konfirmasi Obat Kembali", cls:"workflow-orange"} : state === "FOLLOW_UP" ? {label:attemptNo >= 2 ? "Tentukan Keputusan Akhir" : "Tentukan Tindak Lanjut", cls:"workflow-purple"} : state === "REDELIVERY_PLANNED" ? {label:due ? "Aktifkan Antar Ke-2" : "Lihat / Ubah Jadwal", cls:"workflow-indigo"} : {label:"Konfirmasi Sudah Diambil", cls:"workflow-violet"}; return <TodayDeliveryRow key={rowId(row)} row={row} actions={<button className={`secondary-button small ${meta.cls}`} disabled={busy} onClick={() => openFollowup(row)}><History /> {meta.label}</button>} />; })}</div> : <Empty icon={<ShieldCheck />} title="Tidak ada tindak lanjut" text="Kasus gagal antar yang masih perlu keputusan Farmasi akan muncul di sini." />}{followupModal}{waDialog && <WhatsAppResultModal dialog={waDialog} onClose={() => setWaDialog(null)} />}</div>;
+  if (active === "followup") return <div className="content-stack"><SectionTitle title="Tindak Lanjut Gagal Antar" text="Maksimal dua kali pengantaran ke rumah. Rencana tetap di sini sampai Farmasi mengaktifkan pengantaran ulang pada tanggal jadwal." />{failed.length ? <div className="today-list">{failed.map((row) => { const state=operationalStateOf(row), due=plannedDateOf(row) <= todayKey(), attemptNo=Number(get(row,"attemptCount","Jumlah Percobaan")||1); const meta = state === "RETURN_WAITING" ? {label:"Konfirmasi Obat Kembali", cls:"workflow-orange"} : state === "FOLLOW_UP" ? {label:attemptNo >= 2 ? "Tentukan Keputusan Akhir" : "Tentukan Tindak Lanjut", cls:"workflow-purple"} : state === "REDELIVERY_PLANNED" ? {label:due ? "Aktifkan Antar Ke-2" : "Lihat / Ubah Jadwal", cls:"workflow-indigo"} : {label:"Konfirmasi Sudah Diambil", cls:"workflow-violet"}; return <TodayDeliveryRow key={rowId(row)} row={row} actions={<button className={`secondary-button small ${meta.cls}`} disabled={busy} onClick={() => openFollowup(row)}><History /> {meta.label}</button>} />; })}</div> : <Empty icon={<ShieldCheck />} title="Tidak ada tindak lanjut" text="Kasus gagal antar yang masih perlu keputusan Farmasi akan muncul di sini." />}{followupModal}{waDialog && <WhatsAppResultModal dialog={waDialog} onClose={closeWaDialog} />}</div>;
 
-  if (active === "verify") return <div className="content-stack"><SectionTitle title="Verifikasi Penerimaan" text="WA konfirmasi dapat dibuka bila diperlukan. Catat verifikasi setelah pasien/penerima menyatakan obat sudah diterima." />{manualRows.length ? <div className="today-list">{manualRows.map((row) => <TodayDeliveryRow key={rowId(row)} row={{...row, displayStatus:"MENUNGGU VERIFIKASI PENERIMAAN"}} actions={<div className="action-row"><button className="secondary-button small" disabled={busy} onClick={() => act("getManualReceiptConfirmationWaAction", { id: rowId(row) }, "Pesan konfirmasi disiapkan.", "Konfirmasi penerimaan")}><MessageCircle /> Siapkan WA</button><button className="primary-button small" disabled={busy} onClick={() => { setManualMethod(optionsOf(operationalOptions, "MANUAL_VERIFICATION_METHODS")[0] || "WHATSAPP"); setManualNote("Pasien menyatakan obat sudah diterima"); setManualRow(row); }}><ClipboardCheck /> Sudah Dikonfirmasi</button></div>} />)}</div> : <Empty icon={<ClipboardCheck />} title="Antrean verifikasi kosong" text="Pengantaran tanpa kode akan muncul di sini." />}{manualModal}{waDialog && <WhatsAppResultModal dialog={waDialog} onClose={() => setWaDialog(null)} />}</div>;
+  if (active === "verify") return <div className="content-stack"><SectionTitle title="Verifikasi Penerimaan" text="WA konfirmasi dapat dibuka bila diperlukan. Catat verifikasi setelah pasien/penerima menyatakan obat sudah diterima." />{manualRows.length ? <div className="today-list">{manualRows.map((row) => <TodayDeliveryRow key={rowId(row)} row={{...row, displayStatus:"MENUNGGU VERIFIKASI PENERIMAAN"}} actions={<div className="action-row"><button className="secondary-button small" disabled={busy} onClick={() => act("getManualReceiptConfirmationWaAction", { id: rowId(row) }, "Pesan konfirmasi disiapkan.", "Konfirmasi penerimaan")}><MessageCircle /> Siapkan WA</button><button className="primary-button small" disabled={busy} onClick={() => { setManualMethod(optionsOf(operationalOptions, "MANUAL_VERIFICATION_METHODS")[0] || "WHATSAPP"); setManualNote("Pasien menyatakan obat sudah diterima"); setManualRow(row); }}><ClipboardCheck /> Sudah Dikonfirmasi</button></div>} />)}</div> : <Empty icon={<ClipboardCheck />} title="Antrean verifikasi kosong" text="Pengantaran tanpa kode akan muncul di sini." />}{manualModal}{waDialog && <WhatsAppResultModal dialog={waDialog} onClose={closeWaDialog} />}</div>;
 
-  if (active === "incidents") return <div className="content-stack"><SectionTitle title="Kendala Kurir Aktif" text="Informasi ini membantu Farmasi mengatur koordinasi, Kurir pengganti, dan komunikasi kepada pasien." />{incidents.length ? <div className="incident-list">{incidents.map((row) => <article className="incident-card" key={rowId(row)}><span><TriangleAlert /></span><div><small>{get(row, "courier", "courierName")}</small><h3>{get(row, "type")}</h3>{get(row, "detail") && <p>{get(row, "detail")}</p>}<div><Badge status="KENDALA AKTIF" /><em>{get(row, "affectedCount")} paket • {get(row, "delayEstimate")}</em></div></div></article>)}</div> : <Empty icon={<ShieldCheck />} title="Tidak ada kendala aktif" text="Seluruh Kurir dapat melanjutkan pengantaran." />}{waDialog && <WhatsAppResultModal dialog={waDialog} onClose={() => setWaDialog(null)} />}</div>;
+  if (active === "incidents") return <div className="content-stack"><SectionTitle title="Kendala Kurir Aktif" text="Informasi ini membantu Farmasi mengatur koordinasi, Kurir pengganti, dan komunikasi kepada pasien." />{incidents.length ? <div className="incident-list">{incidents.map((row) => <article className="incident-card" key={rowId(row)}><span><TriangleAlert /></span><div><small>{get(row, "courier", "courierName")}</small><h3>{get(row, "type")}</h3>{get(row, "detail") && <p>{get(row, "detail")}</p>}<div><Badge status="KENDALA AKTIF" /><em>{get(row, "affectedCount")} paket • {get(row, "delayEstimate")}</em></div></div></article>)}</div> : <Empty icon={<ShieldCheck />} title="Tidak ada kendala aktif" text="Seluruh Kurir dapat melanjutkan pengantaran." />}{waDialog && <WhatsAppResultModal dialog={waDialog} onClose={closeWaDialog} />}</div>;
 
   return <div className="content-stack"><section className="welcome-banner"><div><span className="eyebrow">RUANG KERJA FARMASI</span><h2>Operasional hari ini, dalam satu kendali.</h2><p>Pendaftaran, kesiapan obat, label, kode pasien, dan verifikasi tersambung dalam satu alur.</p><button className="light-button" onClick={() => navigate("register")}><Plus /> Daftarkan Pengantaran</button></div><img src="./assets/maskot-melesat.png" alt="Maskot MELESAT" /></section>
     <div className="stats-grid"><ActionStatCard icon={<FileClock />} label="Menunggu diproses" value={counts[STATUS.WAITING] || 0} note="Buka pekerjaan hari ini" tone="orange" onClick={() => navigate("today")} /><ActionStatCard icon={<PackageCheck />} label="Siap diantar" value={counts[STATUS.READY] || 0} note="Pantau antrean Kurir" onClick={() => navigate("today")} /><ActionStatCard icon={<Bike />} label="Dalam perjalanan" value={counts[STATUS.TRANSIT] || 0} note="Sedang ditangani Kurir" tone="purple" onClick={() => navigate("today")} /><ActionStatCard icon={<ClipboardCheck />} label="Menunggu verifikasi" value={manualRows.length} note="Konfirmasi penyerahan tanpa kode" tone="orange" onClick={() => navigate("verify")} /></div>
