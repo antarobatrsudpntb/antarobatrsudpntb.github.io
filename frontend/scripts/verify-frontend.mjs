@@ -52,6 +52,9 @@ check(app.includes('Detail (opsional)') && app.includes('Catatan penyelesaian (o
 check(app.includes('Total tarif layanan') && app.includes('Komposisi Layanan Berdasarkan Pembiayaan') && app.includes('Berbayar penuh'), "bahasa pembiayaan Manajemen diperjelas");
 check(app.includes('Pengantaran ke-') && !app.includes('>Attempt<') && !app.includes('label="Attempt"') && !app.includes('title="Attempt"'), "istilah Attempt tidak ditampilkan sebagai label UI");
 check(app.includes('get(health, "adminActionRequired") === true') && app.includes('Layanan Berjalan Normal'), "status Admin normal tidak dipicu warning teknis");
+check(app.includes('Kode {get(a, "kodeWilayah", "officialCode") || "—"}') && app.includes('Kode Pos'), "Master wilayah menampilkan kode resmi + Kode Pos, bukan areaId internal");
+check(app.includes('eligiblePeriods') && app.includes('periode memiliki data siap ditinjau') && !/periode tahun memiliki data siap ditinjau/i.test(app), "Retensi Admin memakai wording rolling 6+2 berbasis periode");
+check(app.includes('SERVICE_CLOSURE_REASONS') && app.includes('Opsi sistem: Lainnya') && app.includes('Alasan Tutup Layanan'), "Tutup Layanan memakai popup + master alasan Admin + laporan Manajemen");
 
 
 const dist = join(root, "dist");

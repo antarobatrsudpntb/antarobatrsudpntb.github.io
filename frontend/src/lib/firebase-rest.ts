@@ -35,7 +35,7 @@ export const config = {
   apiKey: raw.apiKey || "demo-key",
   region: raw.region || "asia-southeast2",
   emulator: raw.emulator === true || (raw.emulator === "auto" && localHost),
-  appVersion: raw.appVersion || "PRODUKSI-V1",
+  appVersion: raw.appVersion || "V2-FIREBASE",
 };
 
 const KEY = "melesat.session.v1";
@@ -176,27 +176,6 @@ export async function login(username: string, pin: string): Promise<AppUser> {
 }
 
 export async function callFunction<T = Record<string, unknown>>(name: string, data: Record<string, unknown> = {}): Promise<T> {
-  // Universal UI compatibility: Apps Script exposes a consolidated system-health
-  // endpoint. Firebase v1.0.0 predates that display contract, so the provider
-  // adapts existing Firebase health + retention endpoints without touching App.tsx.
-  if (name === "adminSystemHealth") {
-    const [service, retention] = await Promise.all([
-      ping(),
-      callFunction<Record<string, unknown>>("adminRetentionStatus", {}),
-    ]);
-    return {
-      health: {
-        status: service ? "AMAN" : "PERLU PERHATIAN",
-        operationalHold: false,
-        lastBackupAt: "",
-        lastCheckpointAt: "",
-        archive: { status: "NORMAL", lastSyncAt: "" },
-        recommendation: "Backend Firebase aktif. Backup dan recovery mengikuti Firebase resilience engine.",
-        provider: "FIREBASE",
-        retention,
-      },
-    } as T;
-  }
   const response = await jsonFetch(functionUrl(name), {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${await token()}` },

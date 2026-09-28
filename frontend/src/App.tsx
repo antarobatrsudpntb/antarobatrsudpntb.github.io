@@ -30,6 +30,7 @@ const OPTION_FALLBACKS: OperationalOptions = {
   COURIER_INCIDENT_TYPES: ["Ban bocor", "Hujan lebat", "Mesin bermasalah", "Kecelakaan", "Kemacetan berat", "Lainnya"],
   DELAY_ESTIMATES: ["15 menit", "30 menit", "60 menit", "Tidak dapat melanjutkan"],
   MANUAL_VERIFICATION_METHODS: ["TELEPON", "WHATSAPP", "KONFIRMASI LANGSUNG", "LAINNYA"],
+  SERVICE_CLOSURE_REASONS: ["Pasien/keluarga tidak ingin melanjutkan layanan pengantaran", "Pasien memilih memperoleh/membeli obat sendiri", "Pasien tidak dapat dihubungi setelah tindak lanjut", "Lainnya"],
 };
 
 function optionsOf(options: OperationalOptions, key: string) {
@@ -73,7 +74,26 @@ function stateVersionOf(row: Row) { return Math.max(0, Number(get(row, "stateVer
 function mergeVersioned(current: Row, incoming: Row) {
   const currentVersion = stateVersionOf(current), incomingVersion = stateVersionOf(incoming);
   if (currentVersion > 0 && incomingVersion > 0 && incomingVersion < currentVersion) return current;
-  return { ...current, ...incoming };
+  // Preserve the canonical workspace id when a compatibility response only carries ID Sistem.
+  const canonicalId = get(current, "id") || get(incoming, "id");
+  return canonicalId ? { ...current, ...incoming, id: canonicalId } : { ...current, ...incoming };
+}
+function sameRecordIdentity(current: Row, incoming: Row) {
+  const currentId = rowId(current), incomingId = rowId(incoming);
+  if (currentId && incomingId && currentId === incomingId) return true;
+  // History rows are attempt snapshots. Never merge a live-delivery mutation into an older attempt row.
+  if (get(current, "historyAtIso") || get(incoming, "historyAtIso")) return false;
+  const currentSystemId = systemId(current), incomingSystemId = systemId(incoming);
+  return Boolean(currentSystemId && incomingSystemId && currentSystemId === incomingSystemId);
+}
+function isoTimeMs(row: Row, ...keys: string[]) {
+  for (const key of keys) {
+    const value = get(row, key);
+    if (!value) continue;
+    const ms = Date.parse(String(value));
+    if (Number.isFinite(ms)) return ms;
+  }
+  return 0;
 }
 function money(value: unknown) { return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(value || 0)); }
 function dateText(value: unknown) {
@@ -488,6 +508,9 @@ function FarmasiView({ active, data, areas, incidents, operationalOptions, ensur
   const [followupRow, setFollowupRow] = useState<Row | null>(null);
   const [followupDate, setFollowupDate] = useState(todayKey());
   const [followupNote, setFollowupNote] = useState("");
+  const [closureDialog, setClosureDialog] = useState(false);
+  const [closureReason, setClosureReason] = useState("");
+  const [closureNote, setClosureNote] = useState("");
   const [manualRow, setManualRow] = useState<Row | null>(null);
   const [manualMethod, setManualMethod] = useState("WHATSAPP");
   const [manualNote, setManualNote] = useState("Pasien menyatakan obat sudah diterima");
@@ -499,9 +522,27 @@ function FarmasiView({ active, data, areas, incidents, operationalOptions, ensur
   const selectedEditFee = Number(get(selectedEditArea || {}, "patientFee") || 0);
   const counts = useMemo(() => Object.fromEntries(Object.values(STATUS).map((s) => [s, data.filter((r) => baseStatusOf(r) === s).length])), [data]);
   const waiting = data.filter((r) => baseStatusOf(r) === STATUS.WAITING);
-  const failed = data.filter((r) => ["RETURN_WAITING", "FOLLOW_UP", "REDELIVERY_PLANNED", "SELF_PICKUP_WAITING"].includes(operationalStateOf(r)));
-  const todayRows = data.filter((row) => isTodayPharmacyRow(row));
-  const manualRows = data.filter((row) => String(get(row, "receiptStatus", "Status Verifikasi Penerimaan")) === "MENUNGGU VERIFIKASI MANUAL").sort((a,b) => stateVersionOf(a) - stateVersionOf(b));
+  const followupPriority = (row: Row) => {
+    const state = operationalStateOf(row);
+    if (state === "RETURN_WAITING") return 0;
+    if (state === "FOLLOW_UP") return 1;
+    if (state === "SELF_PICKUP_WAITING") return 2;
+    if (state === "REDELIVERY_PLANNED") return plannedDateOf(row) <= todayKey() ? 3 : 4;
+    return 9;
+  };
+  const failed = data
+    .filter((r) => ["RETURN_WAITING", "FOLLOW_UP", "REDELIVERY_PLANNED", "SELF_PICKUP_WAITING"].includes(operationalStateOf(r)))
+    .sort((a, b) => followupPriority(a) - followupPriority(b) || isoTimeMs(a, "updatedAtIso") - isoTimeMs(b, "updatedAtIso"));
+  const todayRows = data
+    .filter((row) => isTodayPharmacyRow(row))
+    .sort((a, b) => {
+      const terminalA = [STATUS.DELIVERED, STATUS.FAILED].includes(baseStatusOf(a)) ? 1 : 0;
+      const terminalB = [STATUS.DELIVERED, STATUS.FAILED].includes(baseStatusOf(b)) ? 1 : 0;
+      return terminalA - terminalB || isoTimeMs(a, "updatedAtIso", "registeredAtIso") - isoTimeMs(b, "updatedAtIso", "registeredAtIso");
+    });
+  const manualRows = data
+    .filter((row) => String(get(row, "receiptStatus", "Status Verifikasi Penerimaan")) === "MENUNGGU VERIFIKASI MANUAL")
+    .sort((a, b) => isoTimeMs(a, "deliveredAtIso", "updatedAtIso") - isoTimeMs(b, "deliveredAtIso", "updatedAtIso"));
 
   useEffect(() => {
     if (active === "register" && !areas.length) void ensureAreas().catch((e) => show("error", e instanceof Error ? e.message : "Master wilayah gagal dimuat."));
@@ -582,7 +623,13 @@ function FarmasiView({ active, data, areas, incidents, operationalOptions, ensur
     setBusy(true); try {
       const result = await callFunction<Row>(name, requestPayload);
       const explicitWa = ["pharmacyRegistrationWaAction", "getManualReceiptConfirmationWaAction", "failedFollowUpWhatsApp", "prepareWhatsApp"].includes(name);
-      if (explicitWa) setWaDialog(whatsAppDialogFromResult(waTitle, result));
+      if (explicitWa) {
+        // WA is a pure side action. Never merge its compatibility record back into the workspace;
+        // doing so can duplicate a card when a migrated/seeded Firestore document id differs from ID Sistem.
+        setWaDialog(whatsAppDialogFromResult(waTitle, result));
+        show("success", success);
+        return result;
+      }
       onMutation(result); show("success", success);
       return result;
     } catch (e) { show("error", e instanceof Error ? e.message : "Aksi gagal."); return null; } finally { setBusy(false); }
@@ -628,6 +675,7 @@ function FarmasiView({ active, data, areas, incidents, operationalOptions, ensur
     const planned = plannedDateOf(row);
     setFollowupDate(planned >= todayKey() ? planned : todayKey());
     setFollowupNote("");
+    setClosureDialog(false); setClosureReason(""); setClosureNote("");
     setFollowupRow(row);
   }
 
@@ -681,11 +729,28 @@ function FarmasiView({ active, data, areas, incidents, operationalOptions, ensur
     return <Modal wide title={`Tindak lanjut ${deliveryCode(followupRow)}`} text={`Gagal antar ke-${attemptNo} • ${deliveryName(followupRow)}`} onClose={() => !busy && setFollowupRow(null)}>
       <div className="modal-form followup-form"><div className="failure-summary"><TriangleAlert /><div><strong>{get(attempt, "failureReason") || get(followupRow, "Alasan Gagal") || "Gagal antar"}</strong><p>{get(attempt, "failureDetail") || get(followupRow, "Catatan Gagal") || "Tanpa catatan tambahan"}</p></div></div>
       {state === "RETURN_WAITING" && <><div className="confirm-note warning"><PackageOpen /><p>Kurir sudah melaporkan gagal antar. Konfirmasi hanya setelah obat fisik benar-benar diterima kembali di Farmasi.</p></div><button className="primary-button" disabled={busy} onClick={() => followupAction("confirmReturnToPharmacy", { requestId: requestId("return"), id: rowId(followupRow) }, "Obat kembali ke Farmasi telah dikonfirmasi.")}><PackageCheck /> Konfirmasi Obat Sudah Kembali</button></>}
-      {["FOLLOW_UP", "REDELIVERY_PLANNED"].includes(state) && <><div className="followup-steps"><button className="secondary-button" disabled={busy} onClick={() => followupAction("failedFollowUpWhatsApp", { requestId: requestId("followup"), id: rowId(followupRow) }, "Pesan tindak lanjut siap dibuka.", "Tindak lanjut gagal antar", false)}><MessageCircle /> Buka/Siapkan WA Tindak Lanjut</button>{attemptNo < 2 && <div className="followup-schedule"><Field label="Tanggal pengantaran ulang" hint="Jika hari ini, paket langsung masuk antrean Kurir. Jika tanggal lain, rencana disimpan dahulu."><input type="date" min={todayKey()} value={followupDate} onChange={(e) => setFollowupDate(e.target.value)} /></Field><button className="primary-button workflow-indigo" disabled={busy || !followupDate} onClick={() => scheduleRedelivery(followupRow)}><CalendarDays /> {followupDate <= todayKey() ? "Aktifkan Antar Ke-2" : "Simpan Jadwal Pengantaran Ulang"}</button></div>}</div><Field label="Catatan keputusan" hint="Opsional untuk Ambil Mandiri; wajib jika layanan ditutup."><textarea value={followupNote} onChange={(e) => setFollowupNote(e.target.value)} placeholder="Contoh: pasien memilih ambil di loket" /></Field><div className="modal-actions inline-actions"><button className="secondary-button" disabled={busy} onClick={() => followupAction("markSelfPickup", { requestId: requestId("pickup"), id: rowId(followupRow), note: followupNote || "Pasien memilih mengambil obat secara mandiri di Farmasi." }, "Pasien diarahkan untuk ambil mandiri.")}><Home /> Tetapkan Ambil Mandiri</button><button className="danger-button" disabled={busy || !followupNote.trim()} onClick={() => followupAction("closeFailedCase", { requestId: requestId("close"), id: rowId(followupRow), note: followupNote }, "Kasus gagal antar ditutup.")}><X /> Tutup Layanan</button></div></>}
+      {["FOLLOW_UP", "REDELIVERY_PLANNED"].includes(state) && <><div className="followup-steps"><button className="secondary-button" disabled={busy} onClick={() => followupAction("failedFollowUpWhatsApp", { requestId: requestId("followup"), id: rowId(followupRow) }, "Pesan tindak lanjut siap dibuka.", "Tindak lanjut gagal antar", false)}><MessageCircle /> Buka/Siapkan WA Tindak Lanjut</button>{attemptNo < 2 && <div className="followup-schedule"><Field label="Tanggal pengantaran ulang" hint="Jika hari ini, paket langsung masuk antrean Kurir. Jika tanggal lain, rencana disimpan dahulu."><input type="date" min={todayKey()} value={followupDate} onChange={(e) => setFollowupDate(e.target.value)} /></Field><button className="primary-button workflow-indigo" disabled={busy || !followupDate} onClick={() => scheduleRedelivery(followupRow)}><CalendarDays /> {followupDate <= todayKey() ? "Aktifkan Antar Ke-2" : "Simpan Jadwal Pengantaran Ulang"}</button></div>}</div><Field label="Catatan tindak lanjut (opsional)" hint="Digunakan untuk Ambil Mandiri atau informasi tambahan tindak lanjut. Alasan Tutup Layanan dipilih pada popup khusus."><textarea value={followupNote} onChange={(e) => setFollowupNote(e.target.value)} placeholder="Contoh: keluarga akan mengambil obat di Farmasi sore hari" /></Field><div className="modal-actions inline-actions"><button className="secondary-button" disabled={busy} onClick={() => followupAction("markSelfPickup", { requestId: requestId("pickup"), id: rowId(followupRow), note: followupNote || "Pasien memilih mengambil obat secara mandiri di Farmasi." }, "Pasien diarahkan untuk ambil mandiri.")}><Home /> Tetapkan Ambil Mandiri</button><button className="danger-button" disabled={busy} onClick={() => { setClosureReason(""); setClosureNote(""); setClosureDialog(true); }}><X /> Tutup Layanan</button></div></>}
       {state === "SELF_PICKUP_WAITING" && <><div className="confirm-note"><Home /><p>Kasus menunggu pengambilan mandiri di Loket Farmasi. Tutup hanya setelah obat benar-benar diserahkan.</p></div><Field label="Catatan penyerahan (opsional)"><textarea value={followupNote} onChange={(e) => setFollowupNote(e.target.value)} placeholder="Nama penerima/waktu penyerahan singkat" /></Field><button className="primary-button" disabled={busy} onClick={() => followupAction("confirmSelfPickup", { requestId: requestId("pickup_done"), id: rowId(followupRow), note: followupNote || "Obat telah diambil mandiri di Loket Farmasi." }, "Pengambilan mandiri dikonfirmasi; kasus selesai.")}><Check /> Konfirmasi Obat Sudah Diambil</button></>}
       </div>
     </Modal>;
   })() : null;
+
+  const closureReasons = optionsOf(operationalOptions, "SERVICE_CLOSURE_REASONS");
+  const closureNeedsNote = closureReason.trim().toLocaleLowerCase("id") === "lainnya";
+  const closureModal = closureDialog && followupRow ? <Modal title={`Tutup Layanan ${deliveryCode(followupRow)}`} text="Pilih alasan penutupan agar keputusan Farmasi tercatat seragam dan mudah ditinjau." onClose={() => !busy && setClosureDialog(false)}>
+    <form className="modal-form" onSubmit={async (event) => {
+      event.preventDefault();
+      if (!closureReason) return show("error", "Pilih alasan penutupan layanan.");
+      if (closureNeedsNote && !closureNote.trim()) return show("error", "Catatan tambahan wajib diisi jika memilih alasan Lainnya.");
+      const result = await followupAction("closeFailedCase", { requestId: requestId("close"), id: rowId(followupRow), reason: closureReason, note: closureNote.trim() }, "Kasus gagal antar ditutup.");
+      if (result) { setClosureDialog(false); setClosureReason(""); setClosureNote(""); }
+    }}>
+      <Field label="Alasan penutupan layanan" hint="Pilihan ini dikelola Admin melalui Pilihan Operasional."><select required value={closureReason} onChange={(e) => setClosureReason(e.target.value)}><option value="">Pilih alasan</option>{closureReasons.map(value => <option key={value} value={value}>{value}</option>)}</select></Field>
+      <Field label={`Catatan tambahan${closureNeedsNote ? " (wajib)" : " (opsional)"}`} hint={closureNeedsNote ? "Jelaskan alasan lain secara singkat." : "Isi bila ada informasi tambahan yang perlu dicatat."}><textarea required={closureNeedsNote} value={closureNote} onChange={(e) => setClosureNote(e.target.value)} placeholder={closureNeedsNote ? "Tuliskan alasan penutupan" : "Catatan tambahan bila diperlukan"} /></Field>
+      <div className="policy-note warning"><TriangleAlert /><div><strong>Penutupan bersifat final untuk alur MELESAT ini</strong><p>Gunakan Ambil Mandiri bila pasien masih akan mengambil obat dari Farmasi. Tutup Layanan digunakan bila tindak lanjut MELESAT dihentikan.</p></div></div>
+      <footer className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={() => setClosureDialog(false)}>Batal</button><button className="danger-button" disabled={busy || !closureReason || (closureNeedsNote && !closureNote.trim())}><X /> Tutup Layanan</button></footer>
+    </form>
+  </Modal> : null;
 
   const manualModal = manualRow ? <Modal title={`Verifikasi ${deliveryCode(manualRow)}`} text={deliveryName(manualRow)} onClose={() => !busy && setManualRow(null)}><form className="modal-form" onSubmit={async (event) => { event.preventDefault(); const currentId = rowId(manualRow); const result = await act("manualVerifyReceipt", { requestId: requestId("manual"), id: currentId, method: manualMethod, note: manualNote }, "Penerimaan terverifikasi manual."); if (result) { setManualRow(null); } }}><Field label="Metode verifikasi"><select value={manualMethod} onChange={(e) => setManualMethod(e.target.value)}>{optionsOf(operationalOptions, "MANUAL_VERIFICATION_METHODS").map(value => <option key={value}>{value}</option>)}</select></Field><Field label="Catatan verifikasi"><textarea required value={manualNote} onChange={(e) => setManualNote(e.target.value)} /></Field><footer className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={() => setManualRow(null)}>Batal</button><button className="primary-button" disabled={busy}><ClipboardCheck /> Simpan Verifikasi</button></footer></form></Modal> : null;
 
@@ -705,7 +770,7 @@ function FarmasiView({ active, data, areas, incidents, operationalOptions, ensur
 
   if (active === "today") return <div className="content-stack"><SectionTitle title="Pengantaran Hari Ini" text="Daftar ringkas berurutan ke bawah: cetak ulang label, kirim ulang WA kode, edit data menunggu, dan tandai obat siap." />{todayRows.length ? <div className="today-list">{todayRows.map((row) => <TodayDeliveryRow key={rowId(row)} row={row} actions={todayActions(row)} />)}</div> : <Empty icon={<CalendarDays />} title="Belum ada pengantaran hari ini" text="Data pendaftaran hari ini dan pekerjaan aktif akan muncul di sini." />}{editModal}{duplicateModal}{readyModal}{waDialog && <WhatsAppResultModal dialog={waDialog} onClose={closeWaDialog} />}</div>;
 
-  if (active === "followup") return <div className="content-stack"><SectionTitle title="Tindak Lanjut Gagal Antar" text="Maksimal dua kali pengantaran ke rumah. Rencana tetap di sini sampai Farmasi mengaktifkan pengantaran ulang pada tanggal jadwal." />{failed.length ? <div className="today-list">{failed.map((row) => { const state=operationalStateOf(row), due=plannedDateOf(row) <= todayKey(), attemptNo=Number(get(row,"attemptCount","Jumlah Percobaan")||1); const meta = state === "RETURN_WAITING" ? {label:"Konfirmasi Obat Kembali", cls:"workflow-orange"} : state === "FOLLOW_UP" ? {label:attemptNo >= 2 ? "Tentukan Keputusan Akhir" : "Tentukan Tindak Lanjut", cls:"workflow-purple"} : state === "REDELIVERY_PLANNED" ? {label:due ? "Aktifkan Antar Ke-2" : "Lihat / Ubah Jadwal", cls:"workflow-indigo"} : {label:"Konfirmasi Sudah Diambil", cls:"workflow-violet"}; return <TodayDeliveryRow key={rowId(row)} row={row} actions={<button className={`secondary-button small ${meta.cls}`} disabled={busy} onClick={() => openFollowup(row)}><History /> {meta.label}</button>} />; })}</div> : <Empty icon={<ShieldCheck />} title="Tidak ada tindak lanjut" text="Kasus gagal antar yang masih perlu keputusan Farmasi akan muncul di sini." />}{followupModal}{waDialog && <WhatsAppResultModal dialog={waDialog} onClose={closeWaDialog} />}</div>;
+  if (active === "followup") return <div className="content-stack"><SectionTitle title="Tindak Lanjut Gagal Antar" text="Maksimal dua kali pengantaran ke rumah. Rencana tetap di sini sampai Farmasi mengaktifkan pengantaran ulang pada tanggal jadwal." />{failed.length ? <div className="today-list">{failed.map((row) => { const state=operationalStateOf(row), due=plannedDateOf(row) <= todayKey(), attemptNo=Number(get(row,"attemptCount","Jumlah Percobaan")||1); const meta = state === "RETURN_WAITING" ? {label:"Konfirmasi Obat Kembali", cls:"workflow-orange"} : state === "FOLLOW_UP" ? {label:attemptNo >= 2 ? "Tentukan Keputusan Akhir" : "Tentukan Tindak Lanjut", cls:"workflow-purple"} : state === "REDELIVERY_PLANNED" ? {label:due ? "Aktifkan Antar Ke-2" : "Lihat / Ubah Jadwal", cls:"workflow-indigo"} : {label:"Konfirmasi Sudah Diambil", cls:"workflow-violet"}; return <TodayDeliveryRow key={rowId(row)} row={row} actions={<button className={`secondary-button small ${meta.cls}`} disabled={busy} onClick={() => openFollowup(row)}><History /> {meta.label}</button>} />; })}</div> : <Empty icon={<ShieldCheck />} title="Tidak ada tindak lanjut" text="Kasus gagal antar yang masih perlu keputusan Farmasi akan muncul di sini." />}{followupModal}{closureModal}{waDialog && <WhatsAppResultModal dialog={waDialog} onClose={closeWaDialog} />}</div>;
 
   if (active === "verify") return <div className="content-stack"><SectionTitle title="Verifikasi Penerimaan" text="WA konfirmasi dapat dibuka bila diperlukan. Catat verifikasi setelah pasien/penerima menyatakan obat sudah diterima." />{manualRows.length ? <div className="today-list">{manualRows.map((row) => <TodayDeliveryRow key={rowId(row)} row={{...row, displayStatus:"MENUNGGU VERIFIKASI PENERIMAAN"}} actions={<div className="action-row"><button className="secondary-button small" disabled={busy} onClick={() => act("getManualReceiptConfirmationWaAction", { id: rowId(row) }, "Pesan konfirmasi disiapkan.", "Konfirmasi penerimaan")}><MessageCircle /> Siapkan WA</button><button className="primary-button small" disabled={busy} onClick={() => { setManualMethod(optionsOf(operationalOptions, "MANUAL_VERIFICATION_METHODS")[0] || "WHATSAPP"); setManualNote("Pasien menyatakan obat sudah diterima"); setManualRow(row); }}><ClipboardCheck /> Sudah Dikonfirmasi</button></div>} />)}</div> : <Empty icon={<ClipboardCheck />} title="Antrean verifikasi kosong" text="Pengantaran tanpa kode akan muncul di sini." />}{manualModal}{waDialog && <WhatsAppResultModal dialog={waDialog} onClose={closeWaDialog} />}</div>;
 
@@ -927,7 +992,7 @@ function AdminView({ active, data, areas, areaCount, transactionCount, activeAcc
   async function prepareCleanup(event: FormEvent) {
     event.preventDefault(); if (!cleanupDialog) return;
     if (!/^\d{4,6}$/.test(cleanupForm.adminPin)) return show("error", "PIN Admin harus 4–6 angka.");
-    const result = await invoke<Row>("adminPrepareCleanup", { requestId: requestId("cleanup_prepare"), year: Number(cleanupDialog.year), adminPin: cleanupForm.adminPin }, "Kesiapan pembersihan berhasil diperiksa.");
+    const result = await invoke<Row>("adminPrepareCleanup", { requestId: requestId("cleanup_prepare"), periodId: String(cleanupDialog.periodId || ""), year: Number(cleanupDialog.year), adminPin: cleanupForm.adminPin }, "Kesiapan pembersihan berhasil diperiksa.");
     if (result) { setCleanupResult(result); setCleanupForm({ adminPin: "", confirmation: "" }); }
   }
 
@@ -1064,7 +1129,10 @@ function AdminView({ active, data, areas, areaCount, transactionCount, activeAcc
 
   function openSetting(kind: "OPTIONS" | "TEMPLATE", key: string, label: string, value: string | string[]) {
     setSettingDialog({ kind, key, label });
-    setSettingValue(Array.isArray(value) ? value.join("\n") : String(value || ""));
+    const editableValue = Array.isArray(value) && key === "SERVICE_CLOSURE_REASONS"
+      ? value.filter(item => item.trim().toLocaleLowerCase("id") !== "lainnya")
+      : value;
+    setSettingValue(Array.isArray(editableValue) ? editableValue.join("\n") : String(editableValue || ""));
     setSettingPin("");
   }
 
@@ -1116,6 +1184,7 @@ function AdminView({ active, data, areas, areaCount, transactionCount, activeAcc
     COURIER_INCIDENT_TYPES: "Jenis Kendala Kurir",
     DELAY_ESTIMATES: "Estimasi Keterlambatan",
     MANUAL_VERIFICATION_METHODS: "Metode Verifikasi Farmasi",
+    SERVICE_CLOSURE_REASONS: "Alasan Tutup Layanan",
   };
 
   const accountModal = accountDialog ? <Modal title={accountDialog === "create" ? "Tambah Akun" : accountDialog === "edit" ? "Kelola Akun" : accountDialog === "vault" ? "Simpan PIN ke Vault" : "Ganti PIN"} text={accountDialog === "pin" ? `Buat PIN baru untuk ${accountForm.name}. PIN baru otomatis tersimpan di PIN Vault.` : accountDialog === "vault" ? `Masukkan PIN login ${accountForm.name} yang sekarang. PIN login tidak diubah.` : "Setiap perubahan membutuhkan konfirmasi PIN Admin dan dicatat dalam audit."} onClose={() => !busy && setAccountDialog(null)}>
@@ -1159,7 +1228,8 @@ function AdminView({ active, data, areas, areaCount, transactionCount, activeAcc
 
   const settingModal = settingDialog ? <Modal wide title={settingDialog.label} text={settingDialog.kind === "OPTIONS" ? "Satu pilihan per baris. Perubahan langsung dipakai modal operasional Farmasi/Kurir." : "Gunakan variabel yang tersedia; pesan tetap dibuka melalui WhatsApp dan tidak dianggap terkirim otomatis."} onClose={() => !busy && setSettingDialog(null)}>
     <form className="modal-form" onSubmit={saveSetting}>
-      <Field label={settingDialog.kind === "OPTIONS" ? "Daftar pilihan" : "Isi template WhatsApp"} hint={settingDialog.kind === "OPTIONS" ? "Urutan baris menjadi urutan pilihan pada aplikasi." : "Variabel wajib tidak boleh dihapus."}><textarea className="settings-textarea" required rows={settingDialog.kind === "OPTIONS" ? 12 : 15} value={settingValue} onChange={(event) => setSettingValue(event.target.value)} /></Field>
+      <Field label={settingDialog.kind === "OPTIONS" ? "Daftar pilihan" : "Isi template WhatsApp"} hint={settingDialog.kind === "OPTIONS" ? settingDialog.key === "SERVICE_CLOSURE_REASONS" ? "Satu alasan standar per baris. Opsi sistem ‘Lainnya’ selalu ditambahkan otomatis di posisi terakhir dan mewajibkan catatan." : "Urutan baris menjadi urutan pilihan pada aplikasi." : "Variabel wajib tidak boleh dihapus."}><textarea className="settings-textarea" required rows={settingDialog.kind === "OPTIONS" ? 12 : 15} value={settingValue} onChange={(event) => setSettingValue(event.target.value)} /></Field>
+      {settingDialog.kind === "OPTIONS" && settingDialog.key === "SERVICE_CLOSURE_REASONS" && <div className="policy-note"><ShieldCheck /><div><strong>Opsi sistem: Lainnya</strong><p>Tidak perlu ditulis di kotak di atas. MELESAT selalu menambahkannya otomatis dan meminta catatan tambahan saat dipilih.</p></div></div>}
       {settingDialog.kind === "TEMPLATE" && <div className="token-panel"><strong>Variabel tersedia</strong><div>{((operationalSettings.allowedTokens || []) as string[]).map(token => <code key={token}>{"{{" + token + "}}"}</code>)}</div></div>}
       <div className="secure-confirm"><ShieldCheck /><div><strong>Perubahan diaudit</strong><p>Masukkan PIN Admin. PIN dan hash tidak pernah ditampilkan atau disimpan di template.</p></div></div>
       <PinInput label="PIN Admin" value={settingPin} onChange={setSettingPin} />
@@ -1176,7 +1246,7 @@ function AdminView({ active, data, areas, areaCount, transactionCount, activeAcc
     </form>
   </Modal> : null;
 
-  const backupModal = backupDialog ? <Modal title="Buat Backup Pengaman" text="Buat salinan pengaman sebelum perubahan besar, pemulihan data, atau pembersihan data tahunan." onClose={() => !busy && setBackupDialog(false)}>
+  const backupModal = backupDialog ? <Modal title="Buat Backup Pengaman" text="Buat salinan pengaman sebelum perubahan besar, pemulihan data, atau pembersihan data sesuai retensi." onClose={() => !busy && setBackupDialog(false)}>
     <form className="modal-form" onSubmit={submitBackup}>
       <Field label="Catatan backup"><textarea required value={backupForm.note} onChange={(event) => setBackupForm({ ...backupForm, note: event.target.value })} /></Field>
       <PinInput label="PIN Admin" value={backupForm.adminPin} onChange={(adminPin) => setBackupForm({ ...backupForm, adminPin })} />
@@ -1188,7 +1258,7 @@ function AdminView({ active, data, areas, areaCount, transactionCount, activeAcc
   const cleanupStatus = String(get(cleanupResult || cleanupDialog || {}, "status") || "");
   const cleanupManifestId = String(get(cleanupResult || cleanupDialog || {}, "manifestId") || "");
   const cleanupGates = (get(cleanupResult || cleanupDialog || {}, "gates") || {}) as Row;
-  const cleanupModal = cleanupDialog ? <Modal wide title={`Pembersihan Data Tahun ${cleanupDialog.year}`} text="Tidak ada penghapusan otomatis. Sistem memeriksa keamanan data, membuat backup pengaman, lalu meminta persetujuan Admin." onClose={() => !busy && setCleanupDialog(null)}>
+  const cleanupModal = cleanupDialog ? <Modal wide title={`Pembersihan Data ${cleanupDialog.periodLabel || cleanupDialog.periodId || "Periode Retensi"}`} text="Tidak ada penghapusan otomatis. Sistem memeriksa keamanan data, membuat backup pengaman, lalu meminta persetujuan Admin." onClose={() => !busy && setCleanupDialog(null)}>
     <div className="cleanup-gates">
       <div><small>Status</small><Badge status={cleanupStatus || String(cleanupDialog.status)} /></div>
       <div><small>Memenuhi syarat</small><strong>{cleanupGates.eligible === false ? "TIDAK" : "YA"}</strong></div>
@@ -1214,7 +1284,7 @@ function AdminView({ active, data, areas, areaCount, transactionCount, activeAcc
       <p>Nomor proses: <code>{cleanupManifestId}</code> • sudah dibersihkan: {Number(get(cleanupResult || cleanupDialog, "deletedTotal", "deletedCount") || 0).toLocaleString("id-ID")}</p>
       <footer className="modal-actions"><button className="secondary-button" disabled={busy} onClick={() => setCleanupDialog(null)}>Tutup</button><button className="danger-button" disabled={busy} onClick={() => void runCleanupBatch()}><RefreshCw /> Lanjutkan Proses</button></footer>
     </div>}
-    {cleanupStatus === "COMPLETE" || cleanupStatus === "CLEANED" ? <div className="policy-note"><Check /><div><strong>Pembersihan selesai</strong><p>Detail operasional tahun ini sudah dibersihkan; arsip analitik anonim tetap dipertahankan.</p></div></div> : null}
+    {cleanupStatus === "COMPLETE" || cleanupStatus === "CLEANED" ? <div className="policy-note"><Check /><div><strong>Pembersihan selesai</strong><p>Detail operasional periode ini sudah dibersihkan; arsip analitik anonim tetap dipertahankan.</p></div></div> : null}
   </Modal> : null;
 
   const selectedRecovery = recoveryRows.find(row => String(get(row, "backupId", "id")) === techBackupId);
@@ -1241,16 +1311,16 @@ function AdminView({ active, data, areas, areaCount, transactionCount, activeAcc
     <div className="table-card account-table"><table><thead><tr><th>Petugas</th><th>Username</th><th>Peran</th><th>PIN</th><th>Status</th><th>Aksi</th></tr></thead><tbody>{accounts.map((row) => { const accountId = String(rowId(row) || get(row, "username")); const pin = String(get(row, "pin") || ""); const visible = visiblePins.has(accountId); return <tr key={accountId}><td><strong>{get(row, "name", "Nama")}</strong><small>{pin ? "PIN tersedia di Vault" : "PIN belum direkam di Vault"}</small></td><td><code>{get(row, "username", "Username")}</code></td><td>{get(row, "role", "Role")}</td><td>{pin ? <button type="button" className="pin-vault-button" onClick={() => toggleAccountPin(accountId)} aria-label={visible ? "Sembunyikan PIN" : "Tampilkan PIN"}><code>{visible ? pin : "••••"}</code>{visible ? <EyeOff /> : <Eye />}</button> : <button type="button" className="pin-vault-missing" onClick={() => openVaultAccount(row)}><KeyRound /> Simpan PIN</button>}</td><td><Badge status={get(row, "active", "Aktif") === false ? "NONAKTIF" : "AKTIF"} /></td><td><div className="row-actions"><button className="secondary-button small" onClick={() => openEditAccount(row)}><Edit3 /> Kelola</button><button className="secondary-button small" onClick={() => openPinAccount(row)}><KeyRound /> Ganti PIN</button></div></td></tr>; })}</tbody></table></div>{accountModal}</div>;
   if (active === "areas") return <div className="content-stack"><SectionTitle title="Master Wilayah Pulau Lombok" text={`${(areaCount || areas.length).toLocaleString("id-ID")} Desa/Kelurahan resmi. Admin mengatur cakupan dan biaya tanpa menambah/menghapus identitas wilayah.`} />
     <div className="area-toolbar"><div className="filter-line"><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari desa, kecamatan, kabupaten…" /></div></div>
-    {filteredAreas.length ? <div className="regency-folders">{groupedAreas.map(([regency, rows]) => { const open = Boolean(query.trim()) || expandedRegencies.has(regency); const activeCount = rows?.filter(area => get(area, "coverageStatus") === "AKTIF").length || 0; return <section className={`regency-folder ${open ? "open" : ""}`} key={regency}><button className="regency-folder-head" type="button" onClick={() => toggleRegency(regency)} aria-expanded={open}><span className="folder-icon">{open ? <FolderOpen /> : <Folder />}</span><span><strong>{regency}</strong><small>{rows?.length || 0} Desa/Kelurahan • {activeCount} aktif</small></span><ChevronDown /></button>{open && <div className="area-grid">{rows?.map((a) => { const id = areaKey(a); const policy = String(get(a, "feePolicy")); return <article className="area-card" key={id}><div className="area-card-head"><div><small>{get(a, "district")}</small><h3>{get(a, "village")}</h3><p>Kode {get(a, "kodeWilayah", "officialCode") || id}{get(a, "kodePos", "postalCode") ? ` • Kode Pos ${get(a, "kodePos", "postalCode")}` : ""}</p></div><button className="area-edit" onClick={() => openEditArea(a)} aria-label={`Kelola ${get(a, "village")}`}><Edit3 /></button></div><div><Badge status={String(get(a, "coverageStatus"))} /><span className="fee">{policy === "SUBSIDI" ? `Tarif ${money(get(a, "baseDeliveryFee"))} • Subsidi ${money(get(a, "subsidyAmount"))} • Pasien ${money(get(a, "patientFee"))}` : `${policy} • ${money(get(a, "patientFee"))}`}</span></div></article>; })}</div>}</section>; })}</div> : <Empty icon={<MapPin />} title={areas.length ? "Wilayah tidak ditemukan" : "Master wilayah masih kosong"} text={areas.length ? "Ubah kata pencarian untuk melihat wilayah lain." : "Jalankan seed Master Pulau Lombok lalu muat ulang halaman."} />}{areaModal}</div>;
+    {filteredAreas.length ? <div className="regency-folders">{groupedAreas.map(([regency, rows]) => { const open = Boolean(query.trim()) || expandedRegencies.has(regency); const activeCount = rows?.filter(area => get(area, "coverageStatus") === "AKTIF").length || 0; return <section className={`regency-folder ${open ? "open" : ""}`} key={regency}><button className="regency-folder-head" type="button" onClick={() => toggleRegency(regency)} aria-expanded={open}><span className="folder-icon">{open ? <FolderOpen /> : <Folder />}</span><span><strong>{regency}</strong><small>{rows?.length || 0} Desa/Kelurahan • {activeCount} aktif</small></span><ChevronDown /></button>{open && <div className="area-grid">{rows?.map((a) => { const id = areaKey(a); const policy = String(get(a, "feePolicy")); return <article className="area-card" key={id}><div className="area-card-head"><div><small>{get(a, "district")}</small><h3>{get(a, "village")}</h3><p>Kode {get(a, "kodeWilayah", "officialCode") || "—"}{get(a, "kodePos", "postalCode") ? ` • Kode Pos ${get(a, "kodePos", "postalCode")}` : ""}</p></div><button className="area-edit" onClick={() => openEditArea(a)} aria-label={`Kelola ${get(a, "village")}`}><Edit3 /></button></div><div><Badge status={String(get(a, "coverageStatus"))} /><span className="fee">{policy === "SUBSIDI" ? `Tarif ${money(get(a, "baseDeliveryFee"))} • Subsidi ${money(get(a, "subsidyAmount"))} • Pasien ${money(get(a, "patientFee"))}` : `${policy} • ${money(get(a, "patientFee"))}`}</span></div></article>; })}</div>}</section>; })}</div> : <Empty icon={<MapPin />} title={areas.length ? "Wilayah tidak ditemukan" : "Master wilayah masih kosong"} text={areas.length ? "Ubah kata pencarian untuk melihat wilayah lain." : "Jalankan seed Master Pulau Lombok lalu muat ulang halaman."} />}{areaModal}</div>;
   if (active === "settings") return <div className="content-stack"><SectionTitle title="Pengaturan Operasional & WhatsApp" text="Admin dapat mengubah pilihan kerja dan seluruh template WhatsApp tanpa membuka source code." />
     <div className="policy-note"><ShieldCheck /><div><strong>Satu sumber pengaturan</strong><p>Perubahan langsung dipakai Farmasi dan Kurir. Pesan WhatsApp tetap dibuka oleh petugas untuk diperiksa sebelum dikirim.</p></div></div>
-    <SectionTitle title="Pilihan Operasional" text="Pilihan ini muncul pada proses Penundaan Pengantaran, Gagal Antar, Selesai, Kendala, dan Verifikasi." />
+    <SectionTitle title="Pilihan Operasional" text="Pilihan ini muncul pada proses Penundaan Pengantaran, Gagal Antar, Tutup Layanan, Selesai, Kendala, dan Verifikasi." />
     <div className="settings-grid">{Object.keys(optionGroups).map(key => <article className="setting-card" key={key}><span><Route /></span><div><h3>{optionLabels[key] || key}</h3><p>{optionGroups[key].length} pilihan</p><small>{optionGroups[key].slice(0, 3).join(" • ")}{optionGroups[key].length > 3 ? " …" : ""}</small></div><button className="secondary-button small" onClick={() => openSetting("OPTIONS", key, optionLabels[key] || key, optionGroups[key])}><Edit3 /> Ubah</button></article>)}</div>
     <SectionTitle title="Template WhatsApp" text="Setiap tindakan memakai template sesuai tahap alur kerja." />
     <div className="template-list">{((operationalSettings.templateDefinitions || []) as Row[]).map(definition => { const key = String(definition.key); return <article className="template-card" key={key}><div><small>{key}</small><h3>{definition.label || key}</h3><p>{templates[key] || "Template belum tersedia."}</p><div className="required-tokens">{((definition.requiredTokens || []) as string[]).map(token => <code key={token}>{"{{" + token + "}}"}</code>)}</div></div><button className="secondary-button small" onClick={() => openSetting("TEMPLATE", key, String(definition.label || key), templates[key] || "")}><Edit3 /> Ubah Template</button></article>; })}</div>{settingModal}</div>;
   if (active === "transactions") return <div className="content-stack"><SectionTitle title="Pencarian & Koreksi" text="Setiap koreksi membutuhkan PIN Admin dan alasan, serta tercatat dalam jejak audit." /><div className="filter-line"><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari kode, pasien, RM, atau wilayah…" /></div><div className="cards-grid">{data.filter((r) => JSON.stringify(r).toLowerCase().includes(query.toLowerCase())).slice(0, 30).map((row) => <DeliveryCard key={rowId(row)} row={row} actions={<button className="secondary-button small" onClick={() => { setCorrectionForm({ status: baseStatusOf(row), note: "", adminPin: "" }); setCorrectionRow(row); }}><Edit3 /> Koreksi</button>} />)}</div>{correctionModal}</div>;
-  if (active === "archive") return <div className="content-stack"><SectionTitle title="Arsip, Backup & Retensi" text="Arsip analitik anonim disimpan selama aplikasi digunakan. Data operasional disimpan 6 bulan + grace 2 bulan, lalu dapat dibersihkan setelah ditinjau dan disetujui Admin." /><div className="resilience-grid"><article><span><Archive /></span><h3>Arsip KPI</h3><p>Data ringkasan disinkronkan berkala ke arsip terpisah tanpa identitas pasien.</p><button className="secondary-button" disabled={busy} onClick={() => void act("adminRunArchiveSync", { requestId: requestId("archive_sync"), batchSize: 100 }, "Arsip berhasil disinkronkan.")}><RefreshCw /> Sinkronkan</button></article><article><span><ShieldCheck /></span><h3>Backup</h3><p>Backup berkala tersedia dan backup tambahan dibuat sebelum tindakan sensitif.</p><button className="secondary-button" disabled={busy} onClick={() => { setBackupForm({ note: "Backup pengaman dibuat melalui Dashboard Admin", adminPin: "" }); setBackupDialog(true); }}><ShieldCheck /> Buat Backup Pengaman</button></article><article><span><CalendarDays /></span><h3>Retensi 6 + 2 Bulan</h3><p>Data operasional yang melewati 6 bulan + grace 2 bulan dapat ditinjau untuk pembersihan. Persetujuan Admin tetap wajib.</p><strong>{get(retention || {}, "eligibleYears")?.length || 0} periode tahun memiliki data siap ditinjau</strong></article></div><div className="policy-note"><ShieldCheck /><div><strong>Perlindungan penghapusan aktif</strong><p>Data hanya dapat dibersihkan setelah arsip lengkap, tidak ada pekerjaan aktif, sistem sehat, backup pengaman tersedia, dan Admin memberikan persetujuan.</p></div></div>
-    <article className="table-card"><SectionTitle title="Retensi Data Operasional" text="Admin meninjau kelompok tahun yang memiliki data lebih tua dari batas 6 bulan + grace 2 bulan sebelum pembersihan dijalankan." /><table><thead><tr><th>Tahun</th><th>Status</th><th>Arsip</th><th>Siap Ditinjau</th><th>Aksi</th></tr></thead><tbody>{(((retention || {}).years || []) as Row[]).length ? (((retention || {}).years || []) as Row[]).map(row => <tr key={String(row.year)}><td><strong>{row.year}</strong></td><td><Badge status={String(row.status)} /></td><td>{uiStatusLabel(row.archiveStatus || "—")}<small>{row.lastSyncAt ? dateText(row.lastSyncAt) : ""}</small></td><td>{row.eligibleAt || "—"}</td><td>{["ELIGIBLE","BLOCKED","PREPARED","APPROVED","RUNNING"].includes(String(row.status)) ? <button className="secondary-button small" onClick={() => openCleanup(row)}><ShieldCheck /> Tinjau</button> : <span>—</span>}</td></tr>) : <tr><td colSpan={5}>Belum ada tahun operasional yang memerlukan retensi.</td></tr>}</tbody></table></article>
+  if (active === "archive") return <div className="content-stack"><SectionTitle title="Arsip, Backup & Retensi" text="Arsip analitik anonim disimpan selama aplikasi digunakan. Data operasional disimpan 6 bulan + grace 2 bulan, lalu dapat dibersihkan setelah ditinjau dan disetujui Admin." /><div className="resilience-grid"><article><span><Archive /></span><h3>Arsip KPI</h3><p>Data ringkasan disinkronkan berkala ke arsip terpisah tanpa identitas pasien.</p><button className="secondary-button" disabled={busy} onClick={() => void act("adminRunArchiveSync", { requestId: requestId("archive_sync"), batchSize: 100 }, "Arsip berhasil disinkronkan.")}><RefreshCw /> Sinkronkan</button></article><article><span><ShieldCheck /></span><h3>Backup</h3><p>Backup berkala tersedia dan backup tambahan dibuat sebelum tindakan sensitif.</p><button className="secondary-button" disabled={busy} onClick={() => { setBackupForm({ note: "Backup pengaman dibuat melalui Dashboard Admin", adminPin: "" }); setBackupDialog(true); }}><ShieldCheck /> Buat Backup Pengaman</button></article><article><span><CalendarDays /></span><h3>Retensi 6 + 2 Bulan</h3><p>Data operasional disimpan 6 bulan aktif + 2 bulan grace. Setelah melewati 8 bulan, data dapat ditinjau untuk pembersihan dengan persetujuan Admin.</p><strong>{(((retention || {}).eligiblePeriods || []) as Row[]).length} periode memiliki data siap ditinjau</strong></article></div><div className="policy-note"><ShieldCheck /><div><strong>Perlindungan penghapusan aktif</strong><p>Data hanya dapat dibersihkan setelah arsip lengkap, tidak ada pekerjaan aktif, sistem sehat, backup pengaman tersedia, dan Admin memberikan persetujuan.</p></div></div>
+    <article className="table-card"><SectionTitle title="Retensi Data Operasional" text="Admin meninjau periode data yang sudah melewati batas 8 bulan. Pengelompokan periode hanya untuk proses review; kebijakan retensi tetap rolling 6 + 2 bulan." /><table><thead><tr><th>Periode</th><th>Status</th><th>Arsip</th><th>Batas Data</th><th>Aksi</th></tr></thead><tbody>{(((retention || {}).periods || []) as Row[]).length ? (((retention || {}).periods || []) as Row[]).map(row => <tr key={String(row.periodId || row.year)}><td><strong>{row.periodLabel || row.periodId || row.year}</strong></td><td><Badge status={String(row.status)} /></td><td>{uiStatusLabel(row.archiveStatus || "—")}<small>{row.lastSyncAt ? dateText(row.lastSyncAt) : ""}</small></td><td>{row.periodEndKey || row.eligibleAt || "—"}</td><td>{["ELIGIBLE","BLOCKED","PREPARED","APPROVED","RUNNING"].includes(String(row.status)) ? <button className="secondary-button small" onClick={() => openCleanup(row)}><ShieldCheck /> Tinjau</button> : <span>—</span>}</td></tr>) : <tr><td colSpan={5}>Belum ada data operasional yang melewati batas 8 bulan.</td></tr>}</tbody></table></article>
     <div className="advanced-entry"><div><LockKeyhole /><span><strong>Mode Teknisi Lanjutan</strong><small>Pemulihan data, perbaikan struktur, dan pemeriksaan teknis lanjutan untuk tim IT/SIMRS.</small></span></div><button className="secondary-button" onClick={() => { setTechSession(null); setTechPin(""); setTechPreview(null); setTechDialog(true); }}><KeyRound /> Buka dengan PIN</button></div>
     {backupModal}{cleanupModal}{techModal}</div>;
   const healthStatus = String(get(health, "status") || "PERLU PERHATIAN").toUpperCase();
@@ -1277,6 +1347,7 @@ function ManagementView({ active, dashboard, range, setRange, reload }: { active
   const verification = dashboard.verification || {};
   const incidents = dashboard.incidentSummary || {};
   const failureReasons = dashboard.failureReasons || [];
+  const closureReasons = dashboard.closureReasons || analytics.closureReasons || [];
   const total = Number(kpi.total || 0);
   const delivered = Number(kpi.delivered || 0);
   const verified = Number(dashboard.verification?.verified || 0);
@@ -1345,11 +1416,12 @@ function ManagementView({ active, dashboard, range, setRange, reload }: { active
         <div className="stats-grid report-kpis"><StatCard icon={<Route />} label="Berhasil pada pengantaran ke-1" value={Number(analytics.firstAttemptSuccess || 0)} tone="green" /><StatCard icon={<RefreshCw />} label="Pengantaran ulang dilakukan" value={Number(analytics.redeliveryAttempts || 0)} tone="purple" /><StatCard icon={<PackageCheck />} label="Sukses antar ulang" value={Number(analytics.redeliverySuccess || 0)} /><StatCard icon={<Clock3 />} label="Pengantaran ditunda" value={Number(analytics.pendingDeliveries || 0)} tone="orange" /><StatCard icon={<TriangleAlert />} label="Total kendala" value={Number(incidents.total || 0)} tone="orange" /><StatCard icon={<ShieldCheck />} label="Kendala selesai" value={Number(incidents.resolved || 0)} tone="green" /></div>
         <div className="report-two-column">
           <ReportTable title="Alasan Gagal Antar" headers={["Alasan", "Jumlah", "Porsi"]} rows={(failureReasons as Row[]).map((row) => [row.name || "Tidak dicatat", Number(row.count || 0), reportShare(row.count, failureReasons.reduce((sum: number, item: Row) => sum + Number(item.count || 0), 0))])} empty="Tidak ada gagal antar pada periode ini." />
-          <ReportTable title="Status Kendala Kurir" headers={["Status", "Jumlah"]} rows={[
-            ["Aktif", Number(incidents.active || 0)],
-            ["Selesai", Number(incidents.resolved || 0)],
-          ]} />
+          <ReportTable title="Alasan Tutup Layanan" text="Keputusan final Farmasi setelah pengantaran gagal." headers={["Alasan", "Jumlah", "Porsi"]} rows={(closureReasons as Row[]).map((row) => [row.name || "Tidak dicatat", Number(row.count || 0), reportShare(row.count, closureReasons.reduce((sum: number, item: Row) => sum + Number(item.count || 0), 0))])} empty="Tidak ada layanan yang ditutup pada periode ini." />
         </div>
+        <ReportTable title="Status Kendala Kurir" headers={["Status", "Jumlah"]} rows={[
+          ["Aktif", Number(incidents.active || 0)],
+          ["Selesai", Number(incidents.resolved || 0)],
+        ]} />
         <div className="policy-note report-privacy"><ShieldCheck /><div><strong>Laporan agregat RSUD Provinsi NTB</strong><p>Tidak memuat nama pasien, nomor rekam medis, alamat, nomor telepon, atau data klinis. Dicetak {dateText(new Date().toISOString())}.</p></div></div>
       </section>
     </section>
@@ -1542,13 +1614,14 @@ function AppShell({ user, onLogout }: { user: AppUser; onLogout: () => void }) {
   }, [user.role]);
 
   const applyMutationResult = useCallback((result: Row) => {
-    const record = (result?.record || null) as Row | null;
+    const rawRecord = (result?.record || null) as Row | null;
+    const attempt = (result?.attempt || null) as Row | null;
+    const record = rawRecord ? (attempt ? { ...rawRecord, attempt } : rawRecord) : null;
     if (record && rowId(record)) {
-      const id = rowId(record);
       setDeliveries(current => {
         let found = false;
         const next = current.map(row => {
-          if (rowId(row) !== id) return row;
+          if (!sameRecordIdentity(row, record)) return row;
           found = true;
           return mergeVersioned(row, record);
         });
