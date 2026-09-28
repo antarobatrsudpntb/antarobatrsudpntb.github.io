@@ -512,7 +512,8 @@ export async function subscribeWorkspaceSignals(role: Role, onChange: () => void
     }
     if (pendingDeltas.length && !interactionBusy()) { emitDeltas(pendingDeltas); pendingDeltas = []; }
     if (deltas.length) emitDeltas(deltas);
-    if ((pendingResync || (result.resyncRequired && changed)) && !interactionBusy()) { pendingResync = false; onChange(); }
+    const roleInvalidation = role !== "FARMASI" && Boolean(result.resyncRequired);
+    if ((pendingResync || roleInvalidation || (result.resyncRequired && changed)) && !interactionBusy()) { pendingResync = false; onChange(); }
     pendingUpdate = false;
     emitPending(false);
   };
